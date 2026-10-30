@@ -23,6 +23,7 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 | D15 | Chunk timestamps | counted from samples | decided |
 | D16 | Running the package | `pip install -e .` with flit_core | decided |
 | D17 | Capture mechanism | a reader thread per source; PortAudio buffers in C | decided |
+| D18 | How T04 checks for lost audio | each source's clock gap within ± 0.1 s, and 0 overflows | decided |
 
 ---
 
@@ -69,6 +70,8 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 - BlackHole is GPL-3.0; it is installed separately and isn't part of our code (D10).
 
 **Revisit if:** crackles, dropouts or silence in T04/T05 → switch to B. Named now so it is a decision, not a silent runtime fallback.
+
+**Settled in S02 (2026-10-30):** the Multi-Output Device contains BlackHole 2ch and the AirPods; its primary (clock) device is BlackHole 2ch at 48 kHz, with drift correction on the AirPods only. The MacBook speakers and the external monitor are not in the group (D3). macOS output is the Multi-Output Device and macOS input the MacBook Pro Microphone. Result: the call audio was heard clearly on the AirPods (T05 passed); the T04 recordings had no crackle or dropouts and no overflows on BlackHole. The switch to B was not needed. BlackHole 2ch runs at 48 kHz on macOS 26.5.2.
 
 **Sources:** [BlackHole README and FAQ](https://github.com/ExistentialAudio/BlackHole) · [vendor article on Tahoe](https://medium.com/@andrew_best/how-to-record-system-audio-on-mac-without-blackhole-macos-tahoe-fix-6cc488b728d1) · [catap](https://pypi.org/project/catap/) · [audiotee](https://github.com/makeusabrew/audiotee) · [Core Audio taps overview](https://www.recall.ai/blog/core-audio-taps)
 
@@ -312,7 +315,7 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 
 **Revisit if:** T04 or E3 shows a gap large enough to distort the latency figures (T14).
 
-**Correction 2026-10-30 (implementation, the decision stands):** with D17's reader threads the anchor rule above was wrong. Starting a Core Audio stream can return after audio is already flowing, so the first read can find much more than one block in PortAudio's buffer. Anchoring at "first read minus one block" then put every timestamp of that source about 0.2 s late, which would have made the measured latency look about 0.2 s better than it was. Evidence: the first 120-s run with D17 showed equal clock gaps of +0.222 s (mic) and +0.216 s (system) with 0 overflows, and the simulator reproduced the pattern when its start returned 0.2 s after audio began. The anchor is now the session time of the first read minus everything buffered at that moment (`read_available`), and the clock gap is measured at the newest buffered sample. What remains unmeasured is Core Audio's own input latency, the delay from the microphone into PortAudio's buffer, estimated at tens of milliseconds (unverified).
+**Correction 2026-10-30 (implementation, the decision stands):** with D17's reader threads the anchor rule above was wrong. The first read can find much more than one block in PortAudio's buffer, most likely because starting a Core Audio stream returns only after audio is already flowing (unverified). Anchoring at "first read minus one block" then put every timestamp of that source about 0.2 s late, which would have made the measured latency look about 0.2 s better than it was. Evidence: the first 120-s run with D17 showed equal clock gaps of +0.222 s (mic) and +0.216 s (system) with 0 overflows, and the simulator reproduced the pattern when its start returned 0.2 s after audio began. The anchor is now the session time of the first read minus everything buffered at that moment (`read_available`), and the clock gap is measured at the newest buffered sample. After the correction, a 120-s run gave clock gaps of +0.002 s (mic) and +0.009 s (system), and both streams' first audio within 5 ms of each other. What remains unmeasured is Core Audio's own input latency, the delay from the microphone into PortAudio's buffer, estimated at tens of milliseconds (unverified).
 
 **Sources:** [sounddevice: streams and callback time information](https://python-sounddevice.readthedocs.io/en/latest/api/streams.html)
 
@@ -360,6 +363,28 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 
 **Revisit if:** overflows appear under S03's load → raise the latency setting; or the mic's clock gap still grows → the working explanation is wrong; investigate again.
 
-**First result (2026-10-30, 120 s with both streams):** 0 overflows on both; the clock gaps were equal on both sources (+0.222 s and +0.216 s), so the mic no longer lost audio relative to BlackHole. The common offset was a timestamp error, corrected in D15. The length difference (0.192 s) was the system stream starting about 0.19 s after the mic; the recorder now aligns both files to the session clock.
+**First result (2026-10-30, 120 s with both streams):** 0 overflows on both; the clock gaps were equal on both sources (+0.222 s and +0.216 s), so the mic no longer lost audio relative to BlackHole. The common offset was a timestamp error, corrected in D15. The length difference (0.192 s) was not lost audio, since the clock gaps were equal, but timing at the start and stop of the two streams; after the D15 correction both streams' first audio was within 5 ms. How T04 checks for lost audio was then revised (D18).
 
 **Sources:** [sounddevice: streams — blocking read, read_available, latency](https://python-sounddevice.readthedocs.io/en/latest/api/streams.html)
+
+---
+
+## D18 · How T04 checks for lost audio
+
+**Decided 2026-10-31 · Claude recommended B · Tatev chose B**
+
+**Decision:** T04's "equal length ± 0.1 s" is replaced by "each source's clock gap within ± 0.1 s, and 0 overflows". The rest of T04 stays: the right speech in each file, no crackle or dropouts. The recorder checks both conditions and exits non-zero when either fails; with `--seconds N` it cuts both files at exactly N seconds of session time, so they share one timeline (useful for E3).
+
+**Evidence (S02)**
+- After D17 and the D15 correction the capture is right: in 120 s both streams' first audio was within 5 ms, the clock gaps were +0.002 s (mic) and +0.009 s (system), and there were no overflows. The file lengths still differed by 0.133 s, because the recorder cut only the mic file at `--seconds`.
+- File length can't measure lost audio reliably. If both files are cut at the same session time, they are equal by construction: in the simulator, a source silently losing 1% of its samples still gave 15.00 s against 15.00 s. If they aren't cut, they differ by up to about 0.1 s with nothing lost, because BlackHole delivers audio in blocks of 0.1 s (1,600 samples at 16 kHz in `eval/clock_check.py`).
+- The clock gap compares each source's sample count with the computer's clock to within a few milliseconds. In the simulator it caught a 1% loss on either source (−0.15 s after 15 s).
+
+**Options**
+- **B — clock gap within ± 0.1 s and 0 overflows (chosen).**
+- C — keep "equal length ± 0.1 s" and compare uncut files stopped at the same moment: keeps the wording, but BlackHole's 0.1-s blocks can make it fail with nothing lost, and smaller losses blur into that noise.
+- Keeping the wording with both files cut at the same session time was ruled out: the lengths would then be equal by construction, so the check would test nothing.
+
+**Why:** B measures directly what "equal length" stood in for, no lost audio and no drift, with the same tolerance and far better precision. Gaps below the threshold stay visible in the recorded numbers.
+
+**Revisit if:** a dropout is heard in a recording whose clock gap passed; then the clock gap misses a kind of loss.
