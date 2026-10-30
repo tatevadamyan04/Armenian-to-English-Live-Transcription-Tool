@@ -55,19 +55,19 @@ MacBook mic ───► M1 capture ──► M2 segmenter ──┐
 BlackHole 2ch ─► M1 capture ──► M2 segmenter ──┘              M3 ASR → M4 speaker → M5 translate
 ```
 
-One process: one capture callback per device, one segmenter thread per source and one inference worker, so the models load once and never compete for CPU or GPU. Per-stage timings go to stderr; stdout carries only the transcript.
+One process: one capture reader thread per device (D17), one segmenter thread per source and one inference worker, so the models load once and never compete for CPU or GPU. Per-stage timings go to stderr; stdout carries only the transcript.
 
 ## 5. Modules
 
 Messages between modules (dataclasses):
 
-- `AudioChunk(source, samples, t_start)` — `source` is `mic` or `system`; `samples` are float32 mono at 16 kHz; `t_start` is seconds since the session started.
+- `AudioChunk(source, samples, t_start)` — `source` is `mic` or `system`; `samples` are float32 mono at 16 kHz, 512 per chunk (D17); `t_start` is seconds since the session started.
 - `Segment(seg_id, source, samples, t_speech_start, t_speech_end, t_end_detected)`
 - `Result(seg_id, t_speech_start, label, hy, en, timings)`
 
 | Module | Input | Output | How (decision) | Session |
 |---|---|---|---|---|
-| M1 capture — `audio.py` | device names or indices from the CLI | `AudioChunk` stream per source | python-sounddevice; BlackHole stereo downmixed; resampled to 16 kHz; `--list-devices`; an unknown device is an error (D2) | S02 |
+| M1 capture — `audio.py` | device names or indices from the CLI | `AudioChunk` stream per source | python-sounddevice; a reader thread per device takes 512-sample blocks from PortAudio's buffer (D17); BlackHole stereo downmixed; converted to 16 kHz by Core Audio inside PortAudio (D14); `t_start` counted from samples (D15); `--list-devices`; an unknown device is an error (D2) | S02 |
 | M2 segmenter — `segmenter.py` | `AudioChunk` stream of one source | `Segment` when a phrase ends | Silero VAD; a phrase ends after ~600 ms of silence; segments capped at ~12 s; both tuned in S03 (D4) | S03 |
 | M3 ASR — `asr.py` | `Segment.samples` | Armenian text; empty text drops the segment with a note on stderr | NVIDIA hy FastConformer, ONNX export via onnx-asr (D5) | S03, S04 |
 | M4 speakers — `speakers.py` | `Segment` | `"Me"` for mic; `"Speaker N"` for system | ECAPA embedding + online clustering by cosine similarity (D7) | S05 |
@@ -105,6 +105,7 @@ PLAN.md  DECISIONS.md  TESTS.md  CLAUDE.md
 handovers/                 one file per session hand-off
 chats/                     every session exported unedited, one .md each
 requirements.txt           exact versions (Python 3.14.5 venv, D1)
+pyproject.toml             package metadata for `pip install -e .` (D16)
 src/hyen/                  M1–M7
 scripts/download_models.py
 eval/                      M8 tools; eval/refs/ holds reference texts only
@@ -136,7 +137,7 @@ data/                      recordings — git-ignored, never committed
 - **Unit tests** (pytest) for pure logic: text normalisation, clustering decisions, output layout, the segmenter on synthetic audio.
 - **Replay tests:** recordings are played on the Mac so they arrive through BlackHole exactly like a call — repeatable without other people.
 - **Measurement:** eval sets E1–E3 with CER/WER, Tatev's rating and chrF, latency and speaker metrics (TESTS.md §3). Models are compared with numbers.
-- **Live tests:** Zoom with friends — recording E3 on Wednesday evening, rehearsal on Saturday.
+- **Live tests:** Zoom with friends — recording E3 on Saturday morning, rehearsal on Sunday.
 
 ## 9. Sessions and schedule
 
@@ -145,16 +146,18 @@ One chat per session; each starts from the previous handover.
 | Day | Session | Work | Done when | h |
 |---|---|---|---|---|
 | Mon 26 – Tue 27 | 01 Plan | brief review, decisions, the four docs, handover | docs committed | 2 |
-| Tue 27 | 02 Audio capture | BlackHole + Multi-Output; M1 + recorder; record E1 | S02 tests pass; E1 recorded | 2.5 |
-| Wed 28 | 03 Walking skeleton | M2, M3 (A), M5 (A), M6, M7; model download script; replay through BlackHole; timing log | S03 tests pass on E1 | 3 |
-| Wed 28 evening | — | Zoom with 2–3 friends: record E3 (~10 min) | E3 recorded | 0.5 |
-| Thu 29 | 04 Measure | transcribe ~3 min of E3; scoring scripts; E2; ASR and translation A vs B; numbers into D5/D6 | TESTS.md §3 numbers logged | 4 |
-| Fri 30 | 05 Speakers | M4; tune on E3 replay | S05 tests measured | 3.5 |
-| Sat 31 | 06 Hardening, 07 README | full TESTS.md run; fix the weakest link; Wi-Fi-off and battery runs; README; rehearsal call | Must tests pass or are documented; README done | 4 |
+| Fri 30, afternoon | 02 Audio capture | BlackHole + Multi-Output; M1 + recorder; record E1 | S02 tests pass; E1 recorded | 2.5 |
+| Fri 30, evening | 03 Walking skeleton | M2, M3 (A), M5 (A), M6, M7; model download script; replay through BlackHole; timing log | S03 tests pass on E1 | 3 |
+| Sat 31, morning | — | Zoom with 2–3 friends: record E3 (~10 min) | E3 recorded | 0.5 |
+| Sat 31 | 04 Measure | transcribe ~3 min of E3; scoring scripts; E2; ASR and translation A vs B; numbers into D5/D6 | TESTS.md §3 numbers logged | 4 |
+| Sat 31, evening | 05 Speakers | M4; tune on E3 replay | S05 tests measured | 3.5 |
+| Sun 1 Nov | 06 Hardening, 07 README | full TESTS.md run; fix the weakest link; Wi-Fi-off and battery runs; README; rehearsal call | Must tests pass or are documented; README done | 4 |
 | Sun 1 Nov | — | buffer; export chats; submit the repository link | G01–G05 | 0.5 |
 | | | | **Total** | **20** |
 
 "S0X tests" = the TESTS.md cases whose *From* column is that session.
+
+Rescheduled on 30 Oct: session 02 started three days after the original plan (Tue 27), so sessions 02–07 moved to Fri 30 – Sun 1 Nov with the same work, exit criteria and hours. Tatev is available until the deadline. The B comparisons stay in S04 (confirmed 30 Oct); the cut list below is unchanged and applies only if we fall behind.
 
 **If we fall behind, cut in this order:** (1) the B comparisons in S04 — keep A and report it as a limitation; (2) E2; (3) S06 shrinks to the Must tests.
 

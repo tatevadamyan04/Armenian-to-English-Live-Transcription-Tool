@@ -189,7 +189,7 @@ def report_session(writers: dict[str, WavWriter], stats: dict[str, audio.SourceS
             file=sys.stderr,
         )
     difference = abs(writers["mic"].seconds - writers["system"].seconds)
-    print(f"  length difference {difference:.3f} s (T04 allows {MAX_LENGTH_DIFFERENCE} s)", file=sys.stderr)
+    print(f"  length difference {difference:.4f} s (T04 allows {MAX_LENGTH_DIFFERENCE} s)", file=sys.stderr)
     problems = []
     for name in audio.SOURCES:
         if stats[name].overflows:
@@ -199,7 +199,7 @@ def report_session(writers: dict[str, WavWriter], stats: dict[str, audio.SourceS
         if writers[name].clipped:
             print(f"warning: {name}: {writers[name].clipped} samples clipped at full scale; lower that level.", file=sys.stderr)
     if difference > MAX_LENGTH_DIFFERENCE:
-        problems.append(f"the two files differ in length by {difference:.3f} s, more than T04's {MAX_LENGTH_DIFFERENCE} s.")
+        problems.append(f"the two files differ in length by {difference:.4f} s, more than T04's {MAX_LENGTH_DIFFERENCE} s.")
     for problem in problems:
         print(f"error: {problem}", file=sys.stderr)
     return 1 if problems else 0

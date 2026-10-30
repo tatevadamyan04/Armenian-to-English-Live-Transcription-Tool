@@ -10,11 +10,11 @@ Test cases come from the brief's requirements (IDs in [PLAN.md §2](PLAN.md)) an
 
 | ID | Req | Type | Procedure | Pass | From | Result |
 |---|---|---|---|---|---|---|
-| T01 | R3 | Must | Run `python -m hyen --list-devices` | Every input device printed with index and name, including "MacBook Pro Microphone" and "BlackHole 2ch"; exit code 0 | S02 | |
-| T02 | R3 | Must | Start with `--mic "MacBook Pro Microphone" --system "BlackHole 2ch"` | Startup line names both devices; the session runs | S02 | |
+| T01 | R3 | Must | Run `python -m hyen --list-devices` | Every input device printed with index and name, including "MacBook Pro Microphone" and "BlackHole 2ch"; exit code 0 | S02 | Pass 2026-10-30: 4 inputs listed, incl. MacBook Pro Microphone (1 ch, 48 kHz) and BlackHole 2ch (2 ch, 48 kHz); exit 0 |
+| T02 | R3 | Must | Start with `--mic "MacBook Pro Microphone" --system "BlackHole 2ch"` | Startup line names both devices; the session runs | S02 | Pass 2026-10-30: startup line names [3] MacBook Pro Microphone and [2] BlackHole 2ch; level lines every 2 s (mic −51 to −25 dBFS) |
 | T03 | R3, Rule | Must | Start with `--mic "No Such Mic"` | Error names the unknown device and lists the available ones; exit code ≠ 0; no default device used | S02 | |
-| T04 | R1 | Must | Play Armenian speech through Zoom (or another app) while Tatev speaks; record 60 s of both sources with the recorder | Both files hold the right speech, equal length ± 0.1 s, no crackle or dropouts | S02 | |
-| T05 | R2 | Must | During T04, listen on the AirPods | Call audio heard clearly through the Multi-Output Device | S02 | |
+| T04 | R1 | Must | Play Armenian speech through Zoom (or another app) while Tatev speaks; record 60 s of both sources with the recorder | Both files hold the right speech, equal length ± 0.1 s, no crackle or dropouts | S02 | Not passed 2026-10-30: right speech in each file, no crackle or gaps heard, 0 overflows, 0 clipped; but the lengths differ by just over 0.1 s. The mic stream delivers fewer samples than time passes (clock gap −0.080 s after 60 s, −0.662 s after 180 s, −0.209 s after 120 s); BlackHole stays exact (0.000 s). `eval/clock_check.py` with one stream at a time: no loss on either device at 48 or 16 kHz; the mic arrives in 15-sample blocks at 16 kHz. Fix proposed as D17 |
+| T05 | R2 | Must | During T04, listen on the AirPods | Call audio heard clearly through the Multi-Output Device | S02 | Pass 2026-10-30: the video heard clearly on the AirPods during T04 (Multi-Output Device: BlackHole 2ch as clock at 48 kHz, drift correction on the AirPods) |
 | T06 | R1 | Must | Run the program while the call side and Tatev both speak | "Me" and "Speaker N" segments appear in the same session | S03 | |
 | T07 | R4 | Must + Measure | E1 replay and live reading | Armenian script on every HY line; CER/WER recorded (§3) | S03 | |
 | T08 | R5 | Must + Measure | Any run | Every printed segment with HY text has a non-empty EN line; rating and chrF recorded (§3) | S03 | |
@@ -32,6 +32,7 @@ Test cases come from the brief's requirements (IDs in [PLAN.md §2](PLAN.md)) an
 | T20 | R4 | Must | 60 s of room silence on both inputs | Nothing printed | S03 | |
 | T21 | R4 | Measure | 60 s of typing, mouse clicks and a notification sound | Number of segments printed and their text, reported in the README | S06 | |
 | T22 | out of scope | Must | Code review | No GUI, installer, echo handling, speaker names or persistence, transcript saving, or other input languages | S06 | |
+| T23 | R3, Rule | Must | Start with `--system "BlackHole 2ch"` and no `--mic` | Usage error naming the missing flag; exit code 2; no stream opened | S02 | |
 
 ## 2. Fail-loud tests
 

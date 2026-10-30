@@ -2,11 +2,16 @@
 
 Opens one input stream per source — the MacBook microphone ("mic") and BlackHole 2ch
 ("system") — and turns what PortAudio delivers into AudioChunk messages: float32 mono
-at 16 kHz with a start time on the session clock.
+at 16 kHz, 512 samples each, with a start time on the session clock.
 
-Decisions: D2 (BlackHole is read as an ordinary input device), D8 (one capture callback
-per device, one queue per source), D14 (Core Audio converts to 16 kHz inside PortAudio),
-D15 (chunk start times are counted from samples).
+Each source has its own reader thread (D17). PortAudio buffers the incoming audio in C,
+so Python never runs on Core Audio's audio thread; the reader takes 512 samples at a time.
+If the reader ever falls further behind than PortAudio's buffer holds, PortAudio reports
+an overflow, and M1 prints it.
+
+Decisions: D2 (BlackHole is read as an ordinary input device), D8 (one capture reader per
+device, one queue per source), D14 (Core Audio converts to 16 kHz inside PortAudio),
+D15 (chunk start times are counted from samples), D17 (reader threads, 512-sample blocks).
 """
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ from __future__ import annotations
 import math
 import queue
 import sys
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -23,6 +29,8 @@ import numpy as np
 import sounddevice as sd
 
 SAMPLE_RATE = 16_000
+BLOCK = 512  # samples per AudioChunk: 32 ms at 16 kHz (D17)
+LATENCY = 0.5  # seconds; PortAudio sizes its input buffer from this (D17)
 SOURCES = ("mic", "system")
 
 
@@ -31,7 +39,7 @@ class AudioChunk:
     """A block of audio from one source, as M2 receives it."""
 
     source: str  # "mic" or "system"
-    samples: np.ndarray  # float32, mono, 16 kHz
+    samples: np.ndarray  # float32, mono, 16 kHz, BLOCK samples
     t_start: float  # seconds since the session started (D15)
 
 
@@ -46,7 +54,7 @@ class InputDevice:
 @dataclass(frozen=True)
 class SourceStats:
     samples: int  # samples delivered so far
-    overflows: int  # how often audio was lost before it reached us
+    overflows: int  # how often PortAudio reported lost audio
     clock_gap: float | None  # sample-count time minus computer-clock time, in seconds (D15)
 
 
@@ -55,7 +63,7 @@ class DeviceError(Exception):
 
 
 class CaptureError(Exception):
-    """A capture stream failed: its callback raised, or the stream stopped by itself."""
+    """A capture stream failed: reading raised an error, or the stream stopped by itself."""
 
 
 # Devices
@@ -127,7 +135,7 @@ def to_mono(block: np.ndarray) -> np.ndarray:
 
 
 class _Source:
-    """One input stream for one source, and the queue its chunks go to."""
+    """One input stream for one source, its reader thread, and the queue its chunks go to."""
 
     def __init__(self, name: str, device: InputDevice, clock: Callable[[], float]) -> None:
         self.name = name
@@ -135,10 +143,11 @@ class _Source:
         self.clock = clock
         self.queue: queue.Queue[AudioChunk | CaptureError] = queue.Queue()
         self.stream: sd.InputStream | None = None
+        self.thread: threading.Thread | None = None
         self.t0 = 0.0  # the session clock's zero, read from clock()
         self.anchor: float | None = None  # session time of this source's first sample (D15)
         self.samples_seen = 0
-        self.last_callback = 0.0  # session time of the latest callback
+        self.last_read = 0.0  # session time of the latest read
         self.overflows = 0
         self.reported_overflows = 0
         self.stopping = False
@@ -151,12 +160,12 @@ class _Source:
             conversion_quality="max",
         )
         try:
-            self.stream = sd.InputStream(
+            self.stream = sd.InputStream(  # no callback: PortAudio buffers, we read (D17)
                 device=self.device.index,
                 channels=self.device.channels,
                 samplerate=SAMPLE_RATE,
                 dtype="float32",
-                callback=self.callback,
+                latency=LATENCY,
                 finished_callback=self.finished,
                 extra_settings=settings,
             )
@@ -165,26 +174,43 @@ class _Source:
                 f"{self.name}: cannot open {describe(self.device)} at {SAMPLE_RATE} Hz: {error}"
             ) from error
 
-    def callback(self, indata: np.ndarray, frames: int, _time: object, status: sd.CallbackFlags) -> None:
-        """Runs on PortAudio's audio thread for every block. Times come from sample counts (D15)."""
+    def start(self) -> None:
+        self.stream.start()
+        self.thread = threading.Thread(target=self.read_loop, name=f"capture-{self.name}", daemon=True)
+        self.thread.start()
+
+    def read_loop(self) -> None:
+        """The reader thread: takes BLOCK samples at a time from PortAudio's buffer (D17).
+
+        It sleeps until a full block is there instead of waiting inside PortAudio, so it
+        never gets stuck in C and stopping is always clean.
+        """
         try:
-            now = self.clock() - self.t0
-            if status.input_overflow:
-                self.overflows += 1
-            if self.anchor is None:
-                self.anchor = now - frames / SAMPLE_RATE
-            t_start = self.anchor + self.samples_seen / SAMPLE_RATE
-            samples = to_mono(indata)
-            self.samples_seen += frames
-            self.last_callback = now
-            self.queue.put(AudioChunk(self.name, samples, t_start))
-        except BaseException as error:
-            # sounddevice would only print this and let the program carry on, so the error
-            # goes to the consumer, which raises it, and the stream is aborted.
-            failure = CaptureError(f"{self.name}: the capture callback failed: {error!r}")
+            while not self.stopping:
+                missing = BLOCK - self.stream.read_available
+                if missing > 0:
+                    time.sleep(missing / SAMPLE_RATE)
+                    continue
+                block, overflowed = self.stream.read(BLOCK)
+                self.add_block(block, overflowed)
+        except BaseException as error:  # noqa: BLE001 — every error must reach the consumer, which raises it
+            failure = CaptureError(f"{self.name}: reading {describe(self.device)} failed: {error!r}")
             failure.__cause__ = error
             self.queue.put(failure)
-            raise sd.CallbackAbort from error
+
+    def add_block(self, block: np.ndarray, overflowed: bool) -> None:
+        """Turn one block into an AudioChunk. Times come from sample counts (D15)."""
+        now = self.clock() - self.t0
+        if overflowed:
+            self.overflows += 1
+        frames = len(block)
+        if self.anchor is None:
+            self.anchor = now - frames / SAMPLE_RATE
+        t_start = self.anchor + self.samples_seen / SAMPLE_RATE
+        samples = to_mono(block)
+        self.samples_seen += frames
+        self.last_read = now
+        self.queue.put(AudioChunk(self.name, samples, t_start))
 
     def finished(self) -> None:
         """Called by sounddevice whenever the stream becomes inactive."""
@@ -211,12 +237,12 @@ class _Source:
     def stats(self) -> SourceStats:
         gap = None
         if self.anchor is not None:
-            gap = self.anchor + self.samples_seen / SAMPLE_RATE - self.last_callback
+            gap = self.anchor + self.samples_seen / SAMPLE_RATE - self.last_read
         return SourceStats(self.samples_seen, self.overflows, gap)
 
 
 class Capture:
-    """One input stream per source (D8), each feeding its own queue.
+    """One input stream and one reader thread per source (D8, D17), each feeding its own queue.
 
     Use it as a context manager so the streams are always closed:
 
@@ -236,7 +262,7 @@ class Capture:
         for source in self._sources.values():
             source.open(t0)
         for source in self._sources.values():
-            source.stream.start()
+            source.start()
 
     def get(self, name: str) -> AudioChunk:
         """The next chunk of a source, waiting for it. Raises CaptureError if the stream failed."""
@@ -259,9 +285,16 @@ class Capture:
         return self._sources[name].stats()
 
     def stop(self) -> None:
-        """Stop and close every stream; errors while closing are raised, not ignored."""
+        """Let the readers finish their current block, then stop and close the streams.
+
+        Errors while stopping are raised, not ignored.
+        """
         for source in self._sources.values():
             source.stopping = True
+        for source in self._sources.values():
+            if source.thread is not None:
+                source.thread.join()
+                source.thread = None
         for source in self._sources.values():
             if source.stream is not None:
                 if source.stream.active:

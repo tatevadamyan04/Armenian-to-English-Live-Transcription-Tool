@@ -15,10 +15,14 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 | D7 | Speaker labels | ECAPA embeddings + online clustering | decided |
 | D8 | Pipeline structure | one process, threads + queues, one inference worker | decided |
 | D9 | Evaluation data and metrics | E1 read + E2 FLEURS + E3 call | decided |
-| D10 | Licence policy | MIT, Apache-2.0, BSD, CC-BY-4.0 only | decided |
+| D10 | Licence policy | permissive only: MIT, MIT-0, Apache-2.0, BSD, 0BSD, Zlib, CC0-1.0, CC-BY-4.0 | decided — revised 2026-10-30 |
 | D11 | Workflow | Claude sends files; Tatev commits and runs commands | decided |
 | D12 | Proof of "local only" | runs with networking off | decided |
 | D13 | Language scope | Eastern Armenian; code-switching is a known limitation | decided |
+| D14 | Resampling to 16 kHz | Core Audio converts inside PortAudio | decided |
+| D15 | Chunk timestamps | counted from samples | decided |
+| D16 | Running the package | `pip install -e .` with flit_core | decided |
+| D17 | Capture mechanism | a reader thread per source; PortAudio buffers in C | decided |
 
 ---
 
@@ -179,9 +183,9 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 
 ## D8 · Pipeline structure
 
-**Decided 2026-10-27 · Claude recommended A · Tatev chose A**
+**Decided 2026-10-27 · Claude recommended A · Tatev chose A · revised 2026-10-30 by D17**
 
-**Decision:** One process. One capture callback per device → one segmenter thread per source → one queue → one inference worker that runs ASR → speaker → translation and prints.
+**Decision:** One process. One capture reader thread per device → one segmenter thread per source → one queue → one inference worker that runs ASR → speaker → translation and prints. (Until D17 this read "one capture callback per device".)
 
 **Options**
 - **A — threads + queues, one inference worker (chosen).**
@@ -219,13 +223,19 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 
 ## D10 · Licence policy
 
-**Decided 2026-10-26, confirmed 2026-10-27 · Tatev**
+**Decided 2026-10-26, confirmed 2026-10-27 · Tatev · revised 2026-10-30: Claude recommended A · Tatev chose A**
 
-**Decision:** Only permissive licences: MIT, Apache-2.0, BSD, CC-BY-4.0, all credited in the README. Not allowed: non-commercial licences (e.g. CC-BY-NC), custom licences with use restrictions, unknown licences.
+**Decision:** Only permissive licences: MIT and MIT-0, Apache-2.0, BSD (including 0BSD), Zlib, CC0-1.0 and CC-BY-4.0, all credited in the README. Not allowed: non-commercial licences (e.g. CC-BY-NC), custom licences with use restrictions, GPL, LGPL and AGPL, and unknown licences. Any other licence is raised with Tatev before anything is installed.
 
-**Scope:** models and libraries used by the project. BlackHole (GPL-3.0) is a driver Tatev installs, not part of our code.
+**Scope:** models and libraries used by the project, including their transitive dependencies. BlackHole (GPL-3.0) is a driver Tatev installs, not part of our code.
 
 **Rule:** check the licence before adding anything, and record it in the README credits.
+
+**Revision 2026-10-30 (new evidence from the S02 licence check):** the original wording allowed "MIT, Apache-2.0, BSD, CC-BY-4.0" and nothing else. The core libraries use permissive licences that were not on that list: NumPy declares BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0, and cffi 2.x, which sounddevice uses to call PortAudio, is MIT No Attribution (MIT-0). Read literally, the old wording ruled out NumPy, which every planned model runtime needs. sounddevice (MIT), the PortAudio library it bundles (MIT) and pycparser (BSD-3-Clause) already qualified.
+- **A — revise the allowed list as above (chosen).**
+- B — keep the old wording: NumPy and cffi don't qualify, and the project stops at S02 step 6.
+
+**Sources:** [NumPy licence metadata](https://anaconda.org/anaconda/numpy/files/modal/info/6967990c7f81d6ec453c5b84) · [cffi 2.0.0 LICENSE](https://sources.debian.org/src/python-cffi/2.0.0-3/LICENSE) · [sounddevice on PyPI](https://pypi.python.org/pypi/sounddevice) · [PortAudio licence](https://portaudio.com/license.html) · [pycparser](https://packages.msys2.org/base/python-pycparser)
 
 ---
 
@@ -261,3 +271,91 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 **Decision:** Eastern Armenian only. Russian or English words mixed into Armenian speech are a known limitation, not handled.
 
 **Why:** confirmed by Tatev; the brief puts other input languages out of scope.
+
+---
+
+## D14 · Getting the audio to 16 kHz
+
+**Decided 2026-10-30 · Claude recommended A · Tatev chose A**
+
+**Decision:** M1 opens both input streams at 16 kHz and lets Core Audio convert from each device's own rate inside PortAudio. The settings are written out in the code — `sd.CoreAudioSettings(change_device_parameters=False, fail_if_conversion_required=False, conversion_quality="max")` — so PortAudio never changes a device's own settings and BlackHole stays at the Multi-Output Device's rate.
+
+**Options**
+- **A — Core Audio converts inside PortAudio (chosen):** no resampling code and no new dependency; the converter's quality and added latency are not visible to us (unverified).
+- B — capture at the native 48 kHz, low-pass filter and keep every third sample in numpy: fully visible and unit-testable; fails loudly unless the device runs at exactly 48 kHz; our own DSP code to get right.
+- C — `scipy.signal.resample_poly` on each chunk: one call, but each chunk is filtered on its own, which leaves seams at chunk edges; adds SciPy for one function.
+
+**Why:** the simplest correct option, and the devices' own settings stay untouched. sounddevice's documentation warns that letting PortAudio change device parameters can disrupt a device other programs are using.
+
+**Checked by:** T04 — listening, the overflow count, and the recorder's comparison of sample-count time with the computer's clock, which would expose a wrong rate — and E1's CER later.
+
+**Revisit if:** T04 shows artefacts or a wrong rate → switch to B.
+
+**Sources:** [sounddevice: Core Audio settings](https://python-sounddevice.readthedocs.io/api/platform-specific-settings.html)
+
+---
+
+## D15 · Timestamps of audio chunks
+
+**Decided 2026-10-30 · Claude recommended A · Tatev chose A**
+
+**Decision:** Each chunk's `t_start` is counted from samples: the source's anchor plus the samples delivered so far ÷ 16 000. The anchor is the session-clock time (`time.monotonic()`) at the source's first callback minus the length of that first chunk. Each source has its own anchor.
+
+**Options**
+- **A — count samples (chosen):** the chunks of a source line up exactly, which M2 needs, and late callbacks don't move them. The count drifts with the device's clock (measured by the recorder); lost samples (overflows) would shift later times and are reported on stderr.
+- B — `time.monotonic()` in every callback: no drift, but late callbacks move the times (jitter), chunks don't line up, and M2 would need smoothing.
+- C — PortAudio's ADC time per callback: closest to the hardware, but each stream stamps on its own time base, so two time bases must be converted to the session clock; unverified on Core Audio.
+
+**Why:** the simplest input for M2, and it checks itself. The timing errors involved are far below the printed one-second resolution and the 5-second limit.
+
+**Checked by:** the recorder's summary prints, per source, the gap between sample-count time and the computer's clock (T04, E3).
+
+**Revisit if:** T04 or E3 shows a gap large enough to distort the latency figures (T14).
+
+**Sources:** [sounddevice: streams and callback time information](https://python-sounddevice.readthedocs.io/en/latest/api/streams.html)
+
+---
+
+## D16 · Running the package
+
+**Decided 2026-10-30 · Claude recommended A · Tatev chose A**
+
+**Decision:** `pip install -e .` with a minimal `pyproject.toml` whose build backend is flit_core. The package declares no dependencies; `requirements.txt` stays the single pinned list (D1).
+
+**Options**
+- **A — editable install with flit_core (chosen):** a one-time step; `python -m hyen` and the `eval/` scripts then work from any folder. flit_core is BSD-3-Clause, has no dependencies besides Python, finds a `src/` folder without configuration, and is used only at install time.
+- B — `PYTHONPATH=src`: no extra file, but needed in every new Terminal window; forgetting it fails with `ModuleNotFoundError`.
+
+**Why:** a src layout has to be installed before its code can run (Python packaging guide). setuptools was not used because it vendors several packages, one of which (autocommand) Gentoo lists as LGPL-3.
+
+**Note:** not tested in Claude's workspace, which can't reach PyPI; the first `pip install -e .` on the Mac is the test.
+
+**Sources:** [Packaging guide: src layout vs flat layout](https://packaging.python.org/en/latest/discussions/src-layout-vs-flat-layout/) · [Flit documentation](https://flit.pypa.io/) · [Flit release history (mirror)](https://daobook.github.io/flit/_sources/history.rst.txt) · [flit_core licence](https://aur.archlinux.org/packages/pypy3-flit-core) · [setuptools' vendored licences (Gentoo)](https://gpo.zugaina.org/AJAX/Ebuild/56078437/View)
+
+---
+
+## D17 · How M1 takes audio from PortAudio
+
+**Decided 2026-10-30 · Claude recommended A, then B after Tatev asked for the comparison · Tatev chose B**
+
+**Decision:** Each source has its own reader thread. The streams run without a Python callback, so PortAudio buffers the incoming audio in C and Python never runs on Core Audio's audio thread. The reader takes 512 samples (32 ms) at a time, stamps them (D15) and puts an `AudioChunk` on its queue; it sleeps until a full block is there instead of waiting inside PortAudio, so stopping is always clean. The streams' latency setting is 0.5 s, from which PortAudio sizes its buffer (exactly how on macOS is unverified). If a reader falls further behind than the buffer holds, PortAudio reports an overflow, which M1 prints and the recorder treats as a failed take.
+
+**Evidence (S02)**
+- T04 recordings with both streams: the mic lost 0.13%, 0.37% and 0.17% of its samples without an overflow flag (clock gap −0.080 s after 60 s, −0.662 s after 180 s, −0.209 s after 120 s); BlackHole lost none.
+- `eval/clock_check.py`, one stream at a time: no loss on either device at 48 kHz or 16 kHz, so the conversion itself is exact (D14 stands). At 16 kHz PortAudio delivered the mic in 15-sample blocks — about 1,070 Python callbacks per second — and BlackHole in 1,600-sample blocks.
+- Working explanation: the callbacks compete with other Python threads for the interpreter lock; when Core Audio's audio thread has to wait, macOS drops input without an overflow flag.
+
+**Options**
+- A — keep the callback with fixed 512-sample blocks: about 31 callbacks per second and two lines of code, but Python still runs on the audio thread, so drops under load stay possible and silent.
+- **B — a reader thread per source, PortAudio buffering in C (chosen):** removes the cause; any loss beyond the buffer is flagged as an overflow; a bigger change to M1's internals; revises D8.
+- C — capture at 48 kHz and convert in our code (D14-B): avoids the 15-sample blocks, but adds conversion code and keeps Python on the audio thread.
+
+**Why:** B removes the cause instead of reducing how often it can strike, and makes any remaining loss loud. S03 adds model inference in other threads — the kind of load that triggers the drops. Claude first recommended A as the smaller change and switched to B when Tatev asked for the comparison.
+
+**Consequences:** M1's outputs are unchanged except that every chunk is exactly 512 samples (the agreed contract said "whatever PortAudio delivers"). D8 now reads "one capture reader thread per device".
+
+**Checked by:** repeating the 120-s recording and T04 — 0 overflows, the mic's clock gap near 0, length difference under 0.1 s. In Claude's workspace, a simulated device with a Python thread hogging the interpreter lock for 30 s lost nothing.
+
+**Revisit if:** overflows appear under S03's load → raise the latency setting; or the mic's clock gap still grows → the working explanation is wrong; investigate again.
+
+**Sources:** [sounddevice: streams — blocking read, read_available, latency](https://python-sounddevice.readthedocs.io/en/latest/api/streams.html)

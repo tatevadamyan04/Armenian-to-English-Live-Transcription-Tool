@@ -1,9 +1,8 @@
-"""Unit tests for M1's pure logic, derived from T01–T03, D15 and the fail-loud rule (CLAUDE.md).
+"""Unit tests for M1's pure logic, derived from T01–T03, D15, D17 and the fail-loud rule (CLAUDE.md).
 
-No audio device is opened: the callback is called directly with arrays.
+No audio device is opened: blocks are handed to the source directly, or come from a
+small stand-in stream.
 """
-
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -16,8 +15,7 @@ DEVICES = [
     audio.InputDevice(1, "BlackHole 2ch", 2, 48000.0),
     audio.InputDevice(4, "ZoomAudioDevice", 2, 48000.0),
 ]
-OK = SimpleNamespace(input_overflow=False)
-OVERFLOW = SimpleNamespace(input_overflow=True)
+SILENT_BLOCK = np.zeros((audio.BLOCK, 1), np.float32)
 
 
 # T01 · the device list shows index and name
@@ -61,11 +59,11 @@ def test_mic_and_system_must_be_different_devices():
         audio.check_distinct(DEVICES[0], DEVICES[0])
 
 
-# D15 · chunk times are counted from samples, not taken from when callbacks happen
+# D15 · chunk times are counted from samples, not taken from when blocks are read
 
 
-def make_source(callback_times):
-    ticks = iter(callback_times)
+def make_source(read_times):
+    ticks = iter(read_times)
     source = audio._Source("mic", DEVICES[0], clock=lambda: next(ticks))
     source.t0 = 100.0
     return source
@@ -76,9 +74,9 @@ def next_chunk(source):
 
 
 def test_chunk_times_are_counted_from_samples():
-    source = make_source([100.5, 100.537, 100.561])  # callbacks arrive irregularly
+    source = make_source([100.5, 100.537, 100.561])  # reads happen irregularly
     for _ in range(3):
-        source.callback(np.zeros((512, 1), np.float32), 512, None, OK)
+        source.add_block(SILENT_BLOCK, overflowed=False)
     times = [next_chunk(source).t_start for _ in range(3)]
     assert times == pytest.approx([0.468, 0.500, 0.532])
 
@@ -86,36 +84,65 @@ def test_chunk_times_are_counted_from_samples():
 def test_chunks_are_float32_mono_copies():
     source = make_source([100.1])
     block = np.array([[0.5, -0.5], [1.0, 0.0]], np.float32)
-    source.callback(block, 2, None, OK)
-    block[:] = 9.0  # PortAudio reuses its buffer after the callback
+    source.add_block(block, overflowed=False)
+    block[:] = 9.0  # the caller may reuse its buffer
     chunk = next_chunk(source)
     assert chunk.samples.dtype == np.float32
     assert chunk.samples.tolist() == [0.0, 0.5]
 
 
 def test_clock_gap_compares_sample_time_with_the_computer_clock():
-    source = make_source([100.032, 101.040])  # the second callback is 8 ms later than the samples say
-    source.callback(np.zeros((512, 1), np.float32), 512, None, OK)
-    source.callback(np.zeros((16000, 1), np.float32), 16000, None, OK)
+    source = make_source([100.032, 101.040])  # the second read is 8 ms later than the samples say
+    source.add_block(SILENT_BLOCK, overflowed=False)
+    source.add_block(np.zeros((16000, 1), np.float32), overflowed=False)  # samples now end at 1.032 s
     assert source.stats().clock_gap == pytest.approx(-0.008)
 
 
-# Fail loudly (CLAUDE.md) · lost audio, callback errors and dead streams all surface
+# Fail loudly (CLAUDE.md) · lost audio, read errors and dead streams all surface
 
 
 def test_overflow_is_reported_on_stderr(capsys):
     source = make_source([100.1])
-    source.callback(np.zeros((512, 1), np.float32), 512, None, OVERFLOW)
+    source.add_block(SILENT_BLOCK, overflowed=True)
     next_chunk(source)
     assert "input overflow" in capsys.readouterr().err
     assert source.stats().overflows == 1
 
 
-def test_callback_error_reaches_the_consumer():
+class StandInStream:
+    """Gives the reader whole blocks, then either an error or a request to stop."""
+
+    def __init__(self, source, blocks, error=None):
+        self.source, self.blocks, self.error = source, list(blocks), error
+
+    @property
+    def read_available(self):
+        return audio.BLOCK
+
+    def read(self, frames):
+        if self.blocks:
+            return self.blocks.pop(0), False
+        if self.error is not None:
+            raise self.error
+        self.source.stopping = True  # like Capture.stop() setting the flag
+        return np.zeros((frames, 1), np.float32), False
+
+
+def test_reader_turns_blocks_into_chunks_until_asked_to_stop():
+    source = make_source([100.1, 100.2, 100.3])
+    source.stream = StandInStream(source, [SILENT_BLOCK, SILENT_BLOCK])
+    source.read_loop()
+    chunks = [next_chunk(source) for _ in range(3)]  # the block read while stopping is kept
+    assert [len(chunk.samples) for chunk in chunks] == [audio.BLOCK] * 3
+    assert source.queue.empty()
+
+
+def test_read_error_reaches_the_consumer():
     source = make_source([100.1])
-    with pytest.raises(sd.CallbackAbort):
-        source.callback(np.zeros(512, np.float32), 512, None, OK)  # not a (frames, channels) block
-    with pytest.raises(audio.CaptureError, match="callback failed"):
+    source.stream = StandInStream(source, [SILENT_BLOCK], error=sd.PortAudioError("Internal PortAudio error"))
+    source.read_loop()
+    next_chunk(source)
+    with pytest.raises(audio.CaptureError, match="reading .* failed"):
         next_chunk(source)
 
 
