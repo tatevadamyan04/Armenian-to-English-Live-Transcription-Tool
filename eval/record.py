@@ -3,10 +3,10 @@
     python eval/record.py session --mic DEVICE --system DEVICE --out DIR [--seconds N]
         Both sources into DIR/mic.wav and DIR/system.wav, for T04 and E3. Both files are
         aligned to the session clock: sample k is session time k / 16000, with silence
-        before each stream's first sample (the two streams start a fraction of a second
-        apart). Stops at N seconds of session time, or on Ctrl+C. Exits non-zero if audio
-        was lost, if a source was pure digital silence, or if the two files differ in
-        length by more than 0.1 s (T04).
+        before each stream's first sample (the two streams may start a moment apart). With
+        --seconds N both files end at exactly N seconds of session time; otherwise Ctrl+C
+        stops. Exits non-zero if audio was lost — an overflow, or a clock gap over 0.1 s
+        (T04) — or if a source was pure digital silence.
 
     python eval/record.py prompts --mic DEVICE --refs FILE --out DIR
         One file per sentence of a reference file, for E1. Shows the Armenian text;
@@ -32,7 +32,7 @@ import numpy as np
 
 from hyen import audio
 
-MAX_LENGTH_DIFFERENCE = 0.1  # seconds; T04's limit
+MAX_CLOCK_GAP = 0.1  # seconds; T04's limit: beyond this, audio was lost or a clock drifts (D15)
 MIN_TAKE_SECONDS = 0.5  # shorter takes are treated as a mis-press and recorded again
 REFS_HEADER = ["id", "hy", "en"]
 ID_PATTERN = re.compile(r"[A-Za-z0-9_-]+")
@@ -133,9 +133,9 @@ def write_wav(path: Path, samples: np.ndarray) -> None:
 def write_aligned(writer: WavWriter, chunk: audio.AudioChunk, limit: int | None = None) -> None:
     """Append a chunk so that sample k of the file is session time k / 16000, up to `limit` samples.
 
-    Before a stream's first chunk, the file gets silence back to session time 0. The two
-    streams start a fraction of a second apart; aligned files make T04's length comparison
-    measure lost audio instead of that start-up difference.
+    Before a stream's first chunk, the file gets silence back to session time 0, so both
+    files share one timeline even though the streams can start a moment apart. That keeps
+    E3's reference times valid for both files.
     """
     if writer.samples == 0:
         pad = round(chunk.t_start * audio.SAMPLE_RATE)
@@ -181,12 +181,14 @@ def record_session(args: argparse.Namespace) -> int:
                 while limit is None or writers["mic"].samples < limit:
                     write_aligned(writers["mic"], capture.get("mic"), limit)
                     for other in capture.drain("system"):
-                        write_aligned(writers["system"], other)
+                        write_aligned(writers["system"], other, limit)
+                while limit is not None and writers["system"].samples < limit:
+                    write_aligned(writers["system"], capture.get("system"), limit)  # BlackHole delivers in bursts
             except KeyboardInterrupt:
                 print("Stopped.", file=sys.stderr)
             capture.stop()
             for other in capture.drain("system"):
-                write_aligned(writers["system"], other)
+                write_aligned(writers["system"], other, limit)
             stats = {name: capture.stats(name) for name in audio.SOURCES}
         finally:
             for writer in writers.values():
@@ -195,6 +197,13 @@ def record_session(args: argparse.Namespace) -> int:
 
 
 def report_session(writers: dict[str, WavWriter], stats: dict[str, audio.SourceStats]) -> int:
+    """Print the summary; return 1 if anything T04 checks went wrong.
+
+    Lost audio is checked per source by the clock gap: the sample count against the
+    computer's clock. File lengths can't show it: with --seconds both files are cut at
+    the same session time, and after Ctrl+C they end where each device's last delivery
+    happened to be (BlackHole delivers in blocks of about 0.1 s).
+    """
     print("\nSummary", file=sys.stderr)
     for name in audio.SOURCES:
         writer, stat = writers[name], stats[name]
@@ -205,18 +214,20 @@ def report_session(writers: dict[str, WavWriter], stats: dict[str, audio.SourceS
             f"clipped {writer.clipped}   overflows {stat.overflows}   clock gap {gap}",
             file=sys.stderr,
         )
-    difference = abs(writers["mic"].seconds - writers["system"].seconds)
-    print(f"  length difference {difference:.4f} s (T04 allows {MAX_LENGTH_DIFFERENCE} s)", file=sys.stderr)
     problems = []
     for name in audio.SOURCES:
-        if stats[name].overflows:
-            problems.append(f"{name}: audio was lost {stats[name].overflows} time(s); close other apps and record again.")
+        stat = stats[name]
+        if stat.overflows:
+            problems.append(f"{name}: audio was lost {stat.overflows} time(s); close other apps and record again.")
+        if stat.clock_gap is not None and abs(stat.clock_gap) > MAX_CLOCK_GAP:
+            problems.append(
+                f"{name}: the sample count and the computer's clock differ by {stat.clock_gap:+.3f} s, "
+                f"more than {MAX_CLOCK_GAP} s: audio was lost or the device's clock drifts (D15)."
+            )
         if not writers[name].nonzero:
             problems.append(SILENCE_HINTS[name])
         if writers[name].clipped:
             print(f"warning: {name}: {writers[name].clipped} samples clipped at full scale; lower that level.", file=sys.stderr)
-    if difference > MAX_LENGTH_DIFFERENCE:
-        problems.append(f"the two files differ in length by {difference:.4f} s, more than T04's {MAX_LENGTH_DIFFERENCE} s.")
     for problem in problems:
         print(f"error: {problem}", file=sys.stderr)
     return 1 if problems else 0
