@@ -1,9 +1,10 @@
 """Download the models into models/ — the only part of the project that uses the network (D12, D20).
 
-Standard library only (D20): every file comes from a fixed Hugging Face commit, so the
-content can't change under us. Large files are checked against the SHA-256 that Hugging
-Face publishes for them; small files are fetched from the same pinned commit. Each model
-folder gets a SOURCE.txt with the repository, commit, licence and the SHA-256 of every file.
+Standard library only (D20): the Hugging Face files come from a fixed commit, so their
+content can't change under us; the Silero VAD file comes from a release tag of its GitHub
+repository (D19). Every model file is checked against a pinned SHA-256; small text files
+(vocabularies, configs, licences) are fetched from the same pinned commit or tag. Each
+model folder gets a SOURCE.txt with the source, version, licence and every file's SHA-256.
 
     python scripts/download_models.py           download what is missing or wrong
     python scripts/download_models.py --verify  check the files on disk only (no network)
@@ -32,22 +33,52 @@ FREE_MARGIN = 1 << 30  # keep at least 1 GiB free after the downloads
 
 @dataclass(frozen=True)
 class File:
-    name: str
-    sha256: str | None  # published by Hugging Face for large files; None for small text files
+    name: str  # file name in the model folder
+    sha256: str | None  # pinned for model files; None for small text files
     approx_bytes: int  # for the disk-space check and progress only
+    remote: str | None = None  # path at the source, when it differs from `name`
 
 
 @dataclass(frozen=True)
 class Model:
     folder: str  # folder under models/
-    repo: str  # Hugging Face repository
-    commit: str  # full commit hash: the files can't change under us
+    source: str  # web page of the source repository
+    version: str  # full commit hash or release tag
+    url_base: str  # each file is downloaded from url_base/<remote or name>
     licence: str
     files: tuple[File, ...]
 
 
+def hf_model(folder: str, repo: str, commit: str, licence: str, files: tuple[File, ...]) -> Model:
+    """A model from a Hugging Face repository, pinned to a full commit hash."""
+    return Model(
+        folder=folder,
+        source=f"https://huggingface.co/{repo}",
+        version=commit,
+        url_base=f"https://huggingface.co/{repo}/resolve/{commit}",
+        licence=licence,
+        files=files,
+    )
+
+
+SILERO_TAG = "v6.2.1"
+
 MODELS = (
-    Model(  # D5 · ASR
+    Model(  # D4, D19 · phrase segmentation
+        folder="vad-silero",
+        source="https://github.com/snakers4/silero-vad",
+        version=SILERO_TAG,
+        url_base=f"https://raw.githubusercontent.com/snakers4/silero-vad/{SILERO_TAG}",
+        licence="MIT (Silero Team; LICENSE file saved alongside)",
+        files=(
+            # SHA-256 from an independent mirror that states it matches the upstream v6.2.1 file
+            # byte for byte (https://huggingface.co/bitsydarel/silero-vad-onnx); a mismatch stops the script.
+            File("silero_vad.onnx", "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3", 2_300_000,
+                 remote="src/silero_vad/data/silero_vad.onnx"),
+            File("LICENSE", None, 1_100),
+        ),
+    ),
+    hf_model(  # D5 · ASR
         folder="asr-hy-fastconformer",
         repo="OpenVoiceOS/stt_hy_fastconformer_hybrid_large_pc_onnx",
         commit="f7db1fad9af6bd8a7a9e08fca02068c403b35468",
@@ -59,7 +90,7 @@ MODELS = (
             File("README.md", None, 3_000),
         ),
     ),
-    Model(  # D6 · translation
+    hf_model(  # D6 · translation
         folder="mt-madlad400-3b-ct2-int8",
         repo="Nextcloud-AI/madlad400-3b-mt-ct2-int8",
         commit="aa32bbdeba7880eff2096ec044cb155a340a9400",
@@ -80,7 +111,7 @@ class DownloadError(Exception):
 
 
 def url_of(model: Model, file: File) -> str:
-    return f"https://huggingface.co/{model.repo}/resolve/{model.commit}/{file.name}"
+    return f"{model.url_base}/{file.remote or file.name}"
 
 
 def sha256_of(path: Path) -> str:
@@ -140,8 +171,8 @@ def check_disk_space(missing_bytes: int) -> None:
 
 def write_source(model: Model, folder: Path, hashes: dict[str, str]) -> None:
     lines = [
-        f"repository: https://huggingface.co/{model.repo}",
-        f"commit: {model.commit}",
+        f"source: {model.source}",
+        f"version: {model.version}",
         f"licence: {model.licence}",
         "files (SHA-256):",
         *(f"  {name}  {hashes[name]}" for name in sorted(hashes)),
@@ -162,7 +193,7 @@ def run_download() -> None:
         folder = MODELS_DIR / model.folder
         folder.mkdir(exist_ok=True)
         hashes = {}
-        print(f"{model.folder}  ({model.repo} @ {model.commit[:7]})", file=sys.stderr)
+        print(f"{model.folder}  ({model.source} @ {model.version[:7]})", file=sys.stderr)
         for file in model.files:
             target = folder / file.name
             if (model, file) in todo:
