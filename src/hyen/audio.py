@@ -55,7 +55,8 @@ class InputDevice:
 class SourceStats:
     samples: int  # samples delivered so far
     overflows: int  # how often PortAudio reported lost audio
-    clock_gap: float | None  # sample-count time minus computer-clock time, in seconds (D15)
+    start: float | None  # session time of the source's first sample (D15)
+    clock_gap: float | None  # newest sample's sample-count time minus the computer clock, in seconds (D15)
 
 
 class DeviceError(Exception):
@@ -147,7 +148,8 @@ class _Source:
         self.t0 = 0.0  # the session clock's zero, read from clock()
         self.anchor: float | None = None  # session time of this source's first sample (D15)
         self.samples_seen = 0
-        self.last_read = 0.0  # session time of the latest read
+        self.newest = 0  # samples captured so far, read or still in PortAudio's buffer, at the latest read
+        self.newest_at = 0.0  # session time of the latest read
         self.overflows = 0
         self.reported_overflows = 0
         self.stopping = False
@@ -187,29 +189,37 @@ class _Source:
         """
         try:
             while not self.stopping:
-                missing = BLOCK - self.stream.read_available
-                if missing > 0:
-                    time.sleep(missing / SAMPLE_RATE)
+                available = self.stream.read_available
+                if available < BLOCK:
+                    time.sleep((BLOCK - available) / SAMPLE_RATE)
                     continue
+                now = self.clock() - self.t0
                 block, overflowed = self.stream.read(BLOCK)
-                self.add_block(block, overflowed)
+                self.add_block(block, overflowed, now, available)
         except BaseException as error:  # noqa: BLE001 — every error must reach the consumer, which raises it
             failure = CaptureError(f"{self.name}: reading {describe(self.device)} failed: {error!r}")
             failure.__cause__ = error
             self.queue.put(failure)
 
-    def add_block(self, block: np.ndarray, overflowed: bool) -> None:
-        """Turn one block into an AudioChunk. Times come from sample counts (D15)."""
-        now = self.clock() - self.t0
+    def add_block(self, block: np.ndarray, overflowed: bool, now: float, available: int) -> None:
+        """Turn one block into an AudioChunk. Times come from sample counts (D15).
+
+        `now` is the session time at which PortAudio's buffer held `available` samples,
+        this block first; the newest of them had just arrived.
+        """
+        if available < len(block):
+            raise ValueError(f"{available} samples available, but a block of {len(block)} was read")
         if overflowed:
             self.overflows += 1
-        frames = len(block)
         if self.anchor is None:
-            self.anchor = now - frames / SAMPLE_RATE
+            # Starting a Core Audio stream can return after audio is already flowing, so the
+            # buffer may hold more than this block: all of it was captured before `now`.
+            self.anchor = now - available / SAMPLE_RATE
         t_start = self.anchor + self.samples_seen / SAMPLE_RATE
         samples = to_mono(block)
-        self.samples_seen += frames
-        self.last_read = now
+        self.newest = self.samples_seen + available
+        self.newest_at = now
+        self.samples_seen += len(block)
         self.queue.put(AudioChunk(self.name, samples, t_start))
 
     def finished(self) -> None:
@@ -237,8 +247,8 @@ class _Source:
     def stats(self) -> SourceStats:
         gap = None
         if self.anchor is not None:
-            gap = self.anchor + self.samples_seen / SAMPLE_RATE - self.last_read
-        return SourceStats(self.samples_seen, self.overflows, gap)
+            gap = self.anchor + self.newest / SAMPLE_RATE - self.newest_at
+        return SourceStats(self.samples_seen, self.overflows, self.anchor, gap)
 
 
 class Capture:

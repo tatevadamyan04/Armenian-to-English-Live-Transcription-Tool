@@ -59,10 +59,10 @@ def test_mic_and_system_must_be_different_devices():
         audio.check_distinct(DEVICES[0], DEVICES[0])
 
 
-# D15 · chunk times are counted from samples, not taken from when blocks are read
+# D15 · chunk times are counted from samples, anchored once to the computer's clock
 
 
-def make_source(read_times):
+def make_source(read_times=()):
     ticks = iter(read_times)
     source = audio._Source("mic", DEVICES[0], clock=lambda: next(ticks))
     source.t0 = 100.0
@@ -74,17 +74,28 @@ def next_chunk(source):
 
 
 def test_chunk_times_are_counted_from_samples():
-    source = make_source([100.5, 100.537, 100.561])  # reads happen irregularly
-    for _ in range(3):
-        source.add_block(SILENT_BLOCK, overflowed=False)
+    source = make_source()
+    for now in (0.5, 0.537, 0.561):  # reads happen irregularly
+        source.add_block(SILENT_BLOCK, False, now, available=audio.BLOCK)
     times = [next_chunk(source).t_start for _ in range(3)]
     assert times == pytest.approx([0.468, 0.500, 0.532])
 
 
+def test_audio_buffered_before_the_first_read_moves_the_anchor_back():
+    # Regression (S02): starting a Core Audio stream can return after audio is already
+    # flowing, so the first read finds a backlog — here 0.25 s instead of one block.
+    source = make_source()
+    source.add_block(SILENT_BLOCK, False, now=0.5, available=4000)
+    source.add_block(SILENT_BLOCK, False, now=0.501, available=4000 - audio.BLOCK)
+    assert [next_chunk(source).t_start for _ in range(2)] == pytest.approx([0.25, 0.282])
+    assert source.stats().start == pytest.approx(0.25)
+    assert source.stats().clock_gap == pytest.approx(-0.001)
+
+
 def test_chunks_are_float32_mono_copies():
-    source = make_source([100.1])
+    source = make_source()
     block = np.array([[0.5, -0.5], [1.0, 0.0]], np.float32)
-    source.add_block(block, overflowed=False)
+    source.add_block(block, False, now=0.1, available=2)
     block[:] = 9.0  # the caller may reuse its buffer
     chunk = next_chunk(source)
     assert chunk.samples.dtype == np.float32
@@ -92,18 +103,24 @@ def test_chunks_are_float32_mono_copies():
 
 
 def test_clock_gap_compares_sample_time_with_the_computer_clock():
-    source = make_source([100.032, 101.040])  # the second read is 8 ms later than the samples say
-    source.add_block(SILENT_BLOCK, overflowed=False)
-    source.add_block(np.zeros((16000, 1), np.float32), overflowed=False)  # samples now end at 1.032 s
+    source = make_source()
+    source.add_block(SILENT_BLOCK, False, now=0.032, available=audio.BLOCK)
+    # 16000 more samples arrived by 1.040 s: by the sample count they end at 1.032 s, 8 ms short
+    source.add_block(np.zeros((16000, 1), np.float32), False, now=1.040, available=16000)
     assert source.stats().clock_gap == pytest.approx(-0.008)
+
+
+def test_reading_more_than_was_available_is_an_error():
+    with pytest.raises(ValueError, match="available"):
+        make_source().add_block(SILENT_BLOCK, False, now=0.1, available=10)
 
 
 # Fail loudly (CLAUDE.md) · lost audio, read errors and dead streams all surface
 
 
 def test_overflow_is_reported_on_stderr(capsys):
-    source = make_source([100.1])
-    source.add_block(SILENT_BLOCK, overflowed=True)
+    source = make_source()
+    source.add_block(SILENT_BLOCK, True, now=0.1, available=audio.BLOCK)
     next_chunk(source)
     assert "input overflow" in capsys.readouterr().err
     assert source.stats().overflows == 1

@@ -1,10 +1,12 @@
 """M8 recorder (session 02): records what M1 delivers into WAV files.
 
     python eval/record.py session --mic DEVICE --system DEVICE --out DIR [--seconds N]
-        Both sources into DIR/mic.wav and DIR/system.wav, for T04 and E3. Stops after
-        N seconds of microphone audio, or on Ctrl+C. Exits non-zero if audio was lost,
-        if a source was pure digital silence, or if the two files differ in length by
-        more than 0.1 s (T04).
+        Both sources into DIR/mic.wav and DIR/system.wav, for T04 and E3. Both files are
+        aligned to the session clock: sample k is session time k / 16000, with silence
+        before each stream's first sample (the two streams start a fraction of a second
+        apart). Stops at N seconds of session time, or on Ctrl+C. Exits non-zero if audio
+        was lost, if a source was pure digital silence, or if the two files differ in
+        length by more than 0.1 s (T04).
 
     python eval/record.py prompts --mic DEVICE --refs FILE --out DIR
         One file per sentence of a reference file, for E1. Shows the Armenian text;
@@ -128,6 +130,22 @@ def write_wav(path: Path, samples: np.ndarray) -> None:
         writer.close()
 
 
+def write_aligned(writer: WavWriter, chunk: audio.AudioChunk, limit: int | None = None) -> None:
+    """Append a chunk so that sample k of the file is session time k / 16000, up to `limit` samples.
+
+    Before a stream's first chunk, the file gets silence back to session time 0. The two
+    streams start a fraction of a second apart; aligned files make T04's length comparison
+    measure lost audio instead of that start-up difference.
+    """
+    if writer.samples == 0:
+        pad = round(chunk.t_start * audio.SAMPLE_RATE)
+        if pad < 0:
+            raise RecordingError(f"{writer.path.name}: the first chunk starts at {chunk.t_start:.3f} s, before the session")
+        writer.write(np.zeros(pad if limit is None else min(pad, limit), np.float32))
+    samples = chunk.samples if limit is None else chunk.samples[: max(0, limit - writer.samples)]
+    writer.write(samples)
+
+
 def resolve(specs: dict[str, str]) -> dict[str, audio.InputDevice]:
     """Resolve --mic/--system exactly like python -m hyen does: exact name or index, no defaults."""
     devices = audio.list_input_devices()
@@ -153,7 +171,7 @@ def record_session(args: argparse.Namespace) -> int:
         f"Recording  mic: {audio.describe(devices['mic'])}  ·  system: {audio.describe(devices['system'])}",
         file=sys.stderr,
     )
-    length = "until Ctrl+C" if limit is None else f"{args.seconds:g} s of microphone audio; Ctrl+C stops earlier"
+    length = "until Ctrl+C" if limit is None else f"{args.seconds:g} s of session time; Ctrl+C stops earlier"
     print(f"Into {out}/, {length}.", file=sys.stderr)
     with audio.Capture(devices) as capture:
         capture.start(time.monotonic())
@@ -161,16 +179,14 @@ def record_session(args: argparse.Namespace) -> int:
         try:
             try:
                 while limit is None or writers["mic"].samples < limit:
-                    chunk = capture.get("mic")
-                    wanted = len(chunk.samples) if limit is None else limit - writers["mic"].samples
-                    writers["mic"].write(chunk.samples[:wanted])
+                    write_aligned(writers["mic"], capture.get("mic"), limit)
                     for other in capture.drain("system"):
-                        writers["system"].write(other.samples)
+                        write_aligned(writers["system"], other)
             except KeyboardInterrupt:
                 print("Stopped.", file=sys.stderr)
             capture.stop()
             for other in capture.drain("system"):
-                writers["system"].write(other.samples)
+                write_aligned(writers["system"], other)
             stats = {name: capture.stats(name) for name in audio.SOURCES}
         finally:
             for writer in writers.values():
@@ -182,9 +198,10 @@ def report_session(writers: dict[str, WavWriter], stats: dict[str, audio.SourceS
     print("\nSummary", file=sys.stderr)
     for name in audio.SOURCES:
         writer, stat = writers[name], stats[name]
+        start = "n/a" if stat.start is None else f"{stat.start:.3f} s"
         gap = "n/a" if stat.clock_gap is None else f"{stat.clock_gap:+.3f} s"
         print(
-            f"  {name:<7}{writer.seconds:8.2f} s   peak {audio.dbfs(writer.peak):>11}   "
+            f"  {name:<7}{writer.seconds:8.2f} s (audio from {start})   peak {audio.dbfs(writer.peak):>11}   "
             f"clipped {writer.clipped}   overflows {stat.overflows}   clock gap {gap}",
             file=sys.stderr,
         )

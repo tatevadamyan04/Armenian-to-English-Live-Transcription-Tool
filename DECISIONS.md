@@ -312,6 +312,8 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 
 **Revisit if:** T04 or E3 shows a gap large enough to distort the latency figures (T14).
 
+**Correction 2026-10-30 (implementation, the decision stands):** with D17's reader threads the anchor rule above was wrong. Starting a Core Audio stream can return after audio is already flowing, so the first read can find much more than one block in PortAudio's buffer. Anchoring at "first read minus one block" then put every timestamp of that source about 0.2 s late, which would have made the measured latency look about 0.2 s better than it was. Evidence: the first 120-s run with D17 showed equal clock gaps of +0.222 s (mic) and +0.216 s (system) with 0 overflows, and the simulator reproduced the pattern when its start returned 0.2 s after audio began. The anchor is now the session time of the first read minus everything buffered at that moment (`read_available`), and the clock gap is measured at the newest buffered sample. What remains unmeasured is Core Audio's own input latency, the delay from the microphone into PortAudio's buffer, estimated at tens of milliseconds (unverified).
+
 **Sources:** [sounddevice: streams and callback time information](https://python-sounddevice.readthedocs.io/en/latest/api/streams.html)
 
 ---
@@ -357,5 +359,7 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 **Checked by:** repeating the 120-s recording and T04 — 0 overflows, the mic's clock gap near 0, length difference under 0.1 s. In Claude's workspace, a simulated device with a Python thread hogging the interpreter lock for 30 s lost nothing.
 
 **Revisit if:** overflows appear under S03's load → raise the latency setting; or the mic's clock gap still grows → the working explanation is wrong; investigate again.
+
+**First result (2026-10-30, 120 s with both streams):** 0 overflows on both; the clock gaps were equal on both sources (+0.222 s and +0.216 s), so the mic no longer lost audio relative to BlackHole. The common offset was a timestamp error, corrected in D15. The length difference (0.192 s) was the system stream starting about 0.19 s after the mic; the recorder now aligns both files to the session clock.
 
 **Sources:** [sounddevice: streams — blocking read, read_available, latency](https://python-sounddevice.readthedocs.io/en/latest/api/streams.html)
