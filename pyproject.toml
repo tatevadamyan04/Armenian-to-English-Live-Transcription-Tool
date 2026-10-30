@@ -1,0 +1,12 @@
+# Package metadata for `pip install -e .` (D16).
+# Dependencies are not listed here: requirements.txt is the single pinned list (D1).
+
+[build-system]
+requires = ["flit_core>=3.4,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "hyen"
+version = "0.1.0"
+description = "Live Armenian-to-English transcription of a Zoom call, running locally on macOS"
+requires-python = "==3.14.*"
