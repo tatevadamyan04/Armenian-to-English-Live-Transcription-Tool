@@ -15,21 +15,21 @@ Test cases come from the brief's requirements (IDs in [PLAN.md §2](PLAN.md)) an
 | T03 | R3, Rule | Must | Start with `--mic "No Such Mic"` | Error names the unknown device and lists the available ones; exit code ≠ 0; no default device used | S02 | Pass 2026-10-31: "no input device 'No Such Mic'" with the 4 input devices listed; exit 2; no stream opened |
 | T04 | R1 | Must | Play Armenian speech through Zoom (or another app) while Tatev speaks; record 60 s of both sources with the recorder | Both files hold the right speech; each source's clock gap within ± 0.1 s and 0 overflows (recorder summary); no crackle or dropouts | S02 | Pass 2026-10-31 (official 60-s run): clock gaps −0.003 s (mic) and −0.013 s (system), 0 overflows, 0 clipped, both files 60.00 s, first audio 11 ms apart; right speech in each file and no crackle or gaps (Tatev, listening). History: content right in all runs: right speech in each file, no crackle or gaps heard, 0 overflows, 0 clipped. Lengths: (1) callback design: the mic lost 0.13–0.37% of its samples without an overflow flag (clock gap −0.080 s after 60 s, −0.209 s after 120 s, −0.662 s after 180 s; BlackHole exact) → D17 reader threads; (2) with D17, 120 s: 0 overflows, equal clock gaps (+0.222 s mic, +0.216 s system) from a timestamp error → D15 correction; length difference 0.192 s from the timing of the streams' start and stop, not lost audio; (3) after the D15 correction, 120 s: clock gaps +0.002 s and +0.009 s, both streams' first audio 5 ms apart, 0 overflows; length difference 0.133 s because the recorder cut only the mic file → criterion revised (D18) |
 | T05 | R2 | Must | During T04, listen on the AirPods | Call audio heard clearly through the Multi-Output Device | S02 | Pass 2026-10-30: the video heard clearly on the AirPods during T04 (Multi-Output Device: BlackHole 2ch as clock at 48 kHz, drift correction on the AirPods) |
-| T06 | R1 | Must | Run the program while the call side and Tatev both speak | "Me" and "Speaker N" segments appear in the same session | S03 | |
-| T07 | R4 | Must + Measure | E1 replay and live reading | Armenian script on every HY line; CER/WER recorded (§3) | S03 | |
-| T08 | R5 | Must + Measure | Any run | Every printed segment with HY text has a non-empty EN line; rating and chrF recorded (§3) | S03 | |
-| T09 | R6 | Must | Live: Tatev speaks into the mic | Every mic segment is labelled exactly "Me", never "Speaker N" | S03 | |
+| T06 | R1 | Must | Run the program while the call side and Tatev both speak | "Me" and "Speaker N" segments appear in the same session | S03 | Pass 2026-10-31 (run 1): 6 "Me" and 13 "Speaker 1" segments in one session — E1 replayed with afplay through BlackHole while Tatev spoke into the mic. Call-side label is the D21 placeholder until S05 |
+| T07 | R4 | Must + Measure | E1 replay and live reading | Armenian script on every HY line; CER/WER recorded (§3) | S03 | Pass (format) 2026-10-31: Armenian script on every HY line — 25/25 E1 files offline (tests/test_asr_mt.py) and every line of runs 1–2. Offline E1: 16/25 identical to the reference, 2 more differ only in punctuation or և/եւ. CER/WER in S04 |
+| T08 | R5 | Must + Measure | Any run | Every printed segment with HY text has a non-empty EN line; rating and chrF recorded (§3) | S03 | Pass (format) 2026-10-31: non-empty EN line for every HY line — 25/25 E1 references offline and every line of runs 1–2. Quality problems seen (D6 S03 observations): added content and wrong country/people names. Rating and chrF in S04 |
+| T09 | R6 | Must | Live: Tatev speaks into the mic | Every mic segment is labelled exactly "Me", never "Speaker N" | S03 | Pass 2026-10-31: all 11 mic segments in runs 1–2 labelled exactly "Me" |
 | T10 | R7 | Must + Measure | E3 replay (2–3 call-side speakers) | Each real speaker's most frequent label differs from the others'; consistency, purity and labels created recorded (§3) | S05 | |
 | T11 | R8 | Must + Measure | E3 replay and rehearsal (P01), ≥ 5 min | A speaker heard early and again ≥ 3 min later carries the same label; consistency recorded | S05 | |
-| T12 | R9 | Must | Any run | Each segment printed as `[HH:MM:SS] label`, `  HY: …`, `  EN: …`; time = speech start since session start; segments appear one by one during the conversation | S03 | |
+| T12 | R9 | Must | Any run | Each segment printed as `[HH:MM:SS] label`, `  HY: …`, `  EN: …`; time = speech start since session start; segments appear one by one during the conversation | S03 | Pass 2026-10-31 (runs 1–2): `[HH:MM:SS] label`, `  HY: …`, `  EN: …`, printed one by one during speech; time = speech start. A mic segment can print after a later-starting call-side one (printed when it ends) |
 | T13 | R9, C4 | Must | Print a line with ՞ ։ ՝ and Armenian letters in Terminal | All characters display correctly | S02 | Pass 2026-10-30: "Բարև, ինչպե՞ս ես։ Լավ եմ՝ շնորհակալություն։ և" printed exactly in Terminal; stdout encoding utf-8 |
-| T14 | C1 | Must + Measure | E1 replay, E3 replay and rehearsal, with the timing log on stderr | Latency ≤ 5.0 s for every segment; median, p95 and max recorded | S03 | |
+| T14 | C1 | Must + Measure | E1 replay, E3 replay and rehearsal, with the timing log on stderr | Latency ≤ 5.0 s for every segment; median, p95 and max recorded | S03 | Pass for E1 replay 2026-10-31 (run 1, 19 segments): median 1.22 s, p95 1.68 s, max 2.88 s (a 12-s cut piece; MT 2.55 s). E3 replay and rehearsal still to run (S04, P01) |
 | T15 | C1 | Must | E3 replay through BlackHole while Tatev reads E1 sentences into the mic | Latency ≤ 5.0 s for every segment with both sources active | S04 | |
-| T16 | C1 | Must | 30 s of continuous speech with no pause | Speech is split at the segment cap; each piece is printed ≤ 5.0 s after it ends | S03 | |
+| T16 | C1 | Must | 30 s of continuous speech with no pause | Speech is split at the segment cap; each piece is printed ≤ 5.0 s after it ends | S03 | Pass 2026-10-31 (run 2): 52 s of continuous reading → four pieces cut at 11.90–12.00 s + one of 2.34 s; latency 1.36–1.97 s; no gaps. Cuts fall mid-word and the ASR misreads the word at each cut (fix in S06: cut at the quietest point before the cap) |
 | T17 | C2 | Must | Models downloaded; Wi-Fi off; run T06 | Runs normally; no download attempts | S06 | |
 | T18 | C4 | Must | Repeat T14 unplugged, on battery, Low Power Mode off | Latency ≤ 5.0 s for every segment | S06 | |
 | T19 | C3 | Must | Code review | The program is Python; dependencies install with pip | S06 | |
-| T20 | R4 | Must | 60 s of room silence on both inputs | Nothing printed | S03 | |
+| T20 | R4 | Must | 60 s of room silence on both inputs | Nothing printed | S03 | Pass 2026-10-31: 60 s of room silence on both inputs, nothing printed (Tatev, watching). Note: the ASR model alone returns text on digital zeros (tests/test_asr_mt.py, xfail); silence is kept from it by the VAD (tests/test_vad_silero.py) |
 | T21 | R4 | Measure | 60 s of typing, mouse clicks and a notification sound | Number of segments printed and their text, reported in the README | S06 | |
 | T22 | out of scope | Must | Code review | No GUI, installer, echo handling, speaker names or persistence, transcript saving, or other input languages | S06 | |
 | T23 | R3, Rule | Must | Start with `--system "BlackHole 2ch"` and no `--mic` | Usage error naming the missing flag; exit code 2; no stream opened | S02 | Pass 2026-10-31: "--mic is required" with the usage line; exit 2; no stream opened |
@@ -42,8 +42,8 @@ T04's pass criterion was revised on 2026-10-31 (D18): "equal length ± 0.1 s" be
 |---|---|---|---|---|---|
 | F01 | no silent failure | Remove Terminal's microphone permission, then start | Within 10 s, stderr says the mic delivers only digital silence and names the likely cause (permission). Mic only: BlackHole legitimately delivers zeros while nothing plays | S06 | |
 | F02 | no silent failure | Disconnect the AirPods (breaking the Multi-Output Device) mid-session | A visible error; the program doesn't carry on with a dead source | S06 | |
-| F03 | local only, fail loudly | Remove one model from the cache; start (the program sets `HF_HUB_OFFLINE=1`) | Error names the model and the download command; exit code ≠ 0 | S03 | |
-| F04 | no dead threads | Unit test: a stage raises an exception | The whole program stops with a traceback and exit code ≠ 0 | S03 | |
+| F03 | local only, fail loudly | Remove one model from the cache; start (the program sets `HF_HUB_OFFLINE=1`) | Error names the model and the download command; exit code ≠ 0 | S03 | Pass 2026-10-31: with models/vad-silero moved away: "error: Silero VAD model not found at …/models/vad-silero/silero_vad.onnx" + the download command; exit 1 |
+| F04 | no dead threads | Unit test: a stage raises an exception | The whole program stops with a traceback and exit code ≠ 0 | S03 | Pass 2026-10-31: tests/test_pipeline.py — an exception in the worker or a capture error in a segmenter thread is re-raised in the main thread with the thread's name; a subprocess run exits non-zero with the traceback (116 passed, 1 xfailed) |
 | F05 | no hidden backlog | Long E3 replay with both sources | No segment dropped; every segment's latency appears in the timing log | S04 | |
 
 ## 3. Measurement protocol
@@ -62,10 +62,13 @@ Applied identically to hypothesis and reference before CER/WER:
 
 1. Unicode NFKC — this also turns the ligature "և" into "եւ", so both spellings match.
 2. Lowercase.
-3. Replace punctuation with a space: Armenian ։ ՝ ՞ ՛ ՜ « » ֊ and ASCII . , ? ! : ; " ' ( ) - …
-4. Collapse whitespace.
+3. Delete the Armenian marks written inside a word — ՞ (question), ՛ (emphasis), ՜ (exclamation) — so «ի՞նչ» matches «ինչ».
+4. Replace other punctuation with a space: Armenian ։ ՝ « » ֊ and ASCII . , ? ! : ; " ' ( ) - …
+5. Collapse whitespace.
 
 Numbers are not normalised, which is why E1 avoids digits.
+
+Revised 2026-10-31 (S03): step 3 was "replace with a space" for all marks; that would split «ի՞նչ» into «ի նչ» and count a correct word as wrong (seen in E1: e1_05, e1_14). To confirm with Tatev at the start of S04.
 
 ### 3.3 Metrics
 

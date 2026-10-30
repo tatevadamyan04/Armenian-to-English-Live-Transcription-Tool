@@ -9,7 +9,7 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 | D1 | Python environment | installed Python 3.14.5 + venv | decided |
 | D2 | System-audio capture | BlackHole 2ch + Multi-Output Device | decided |
 | D3 | Listening and microphone | AirPods for listening, MacBook mic as input | decided |
-| D4 | Phrase segmentation | Silero VAD | decided — licence check in S03 |
+| D4 | Phrase segmentation | Silero VAD | decided — licence checked in S03 (MIT) |
 | D5 | Armenian ASR | NVIDIA hy FastConformer (ONNX, onnx-asr) | decided — confirm by measurement |
 | D6 | Translation | MADLAD-400-3B-MT (CTranslate2 int8) | decided — confirm by measurement |
 | D7 | Speaker labels | ECAPA embeddings + online clustering | decided |
@@ -24,6 +24,9 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 | D16 | Running the package | `pip install -e .` with flit_core | decided |
 | D17 | Capture mechanism | a reader thread per source; PortAudio buffers in C | decided |
 | D18 | How T04 checks for lost audio | each source's clock gap within ± 0.1 s, and 0 overflows | decided |
+| D19 | Running Silero VAD | the ONNX file directly with onnxruntime; no torch | decided |
+| D20 | Downloading the models | standard-library script; pinned versions and SHA-256; no huggingface_hub | decided |
+| D21 | Call-side label before M4 | fixed "Speaker 1" placeholder until S05 | decided — temporary |
 
 ---
 
@@ -111,7 +114,9 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 
 **Open:** the PyPI text and the repository metadata say MIT, but a README badge says CC BY-NC 4.0. Read the LICENSE file in S03 before adopting it (D10).
 
-**Sources:** [silero-vad on PyPI](https://pypi.org/project/silero-vad) · [repository metadata](https://science.ecosyste.ms/projects/32425)
+**Licence settled in S03 (2026-10-31):** the LICENSE file is MIT ("Copyright (c) 2020-present Silero Team"), as published in a mirror that states it is a verbatim copy of the v6.2.1 LICENSE; the citation metadata and the package text also say MIT. The CC BY-NC badge contradicts the LICENSE file and is treated as outdated. The download script saves the upstream LICENSE next to the model, so the claim is checked on the Mac. How Silero is run: D19.
+
+**Sources:** [silero-vad on PyPI](https://pypi.org/project/silero-vad) · [repository metadata](https://science.ecosyste.ms/projects/32425) · [LICENSE copy (onnx-community mirror)](https://huggingface.co/onnx-community/silero-vad/blob/main/LICENSE) · [v6.2.1 ONNX mirror with SHA-256](https://huggingface.co/bitsydarel/silero-vad-onnx)
 
 ---
 
@@ -133,6 +138,12 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 **Known weaknesses:** 60.78% WER on ArmBench "Movies" (dialogue). The ONNX export contains only the CTC decoder, and ArmBench doesn't say which of the model's two decoders it scored (checked by M01). The export is community-made, not NVIDIA's.
 
 **Confirm by measurement (S04):** compare with B on E1–E3. Rule: lowest CER on E3, then E1, within the latency budget (TESTS.md §3.5). Confirmed by Tatev on 2026-10-30: B is still measured against A in S04.
+
+**S03 observations (2026-10-31, before the S04 measurement):**
+- E1 offline (tests/test_asr_mt.py): 16 of 25 recordings recognised word for word; 2 more differ only in punctuation or «և»/«եւ». Errors: «կրկնում» for «կրկնեք», a missing «է», «Անն է» for «Աննա», «խոսում եմ եք» for «խոսո՞ւմ եք», «ունի» for «ունեմ».
+- Speed: 0.01–0.02 s per 2–4 s phrase; 0.14–0.15 s for a 12-s segment in the live runs. Well inside the 1.0-s budget.
+- On 3 s of digital zeros the model alone returned «Ինչ էին։»: the CTC decoder does invent text on silence, contrary to the expectation above (K10). In the program the VAD keeps silence away from ASR (T20 passed); recorded as a known limitation (xfail test).
+- At a forced 12-s cut the word split by the cut is misrecognised (T16) — a segmentation issue for S06, not a model choice.
 
 **Sources:** [ArmBench-ASR](https://metric-ai-armbench-asr.static.hf.space/index.html) · [ArmBench release (Runtime Wire)](https://runtimewire.com/article/metric-armbench-asr-armenian-speech-benchmark) · [NVIDIA model files and licence](https://huggingface.co/nvidia/stt_hy_fastconformer_hybrid_large_pc/tree/refs%2Fpr%2F3) · [ONNX export](https://huggingface.co/OpenVoiceOS/stt_hy_fastconformer_hybrid_large_pc_onnx) · [onnx-asr](https://pypi.org/project/onnx-asr/) · [NeMo README, Apple silicon section (fork copy)](https://github.com/michalivne/NeMo) · [BuzzASR/armenian](https://huggingface.co/BuzzASR/armenian) · [BuzzASR paper](https://arxiv.org/abs/2609.09554) · [Chillarmo turbo licence](https://mixpeek.com/model/Chillarmo/whisper-large-v3-turbo-armenian) · [SeamlessM4T v2 licence](https://www.endorlabs.com/ai-model/facebook-seamless-m4t-v2-large) · [Careless Whisper (Whisper hallucinations)](https://arxiv.org/abs/2402.08021v2)
 
@@ -156,6 +167,12 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 **Unknowns:** no published hy→en score found; the model card says it was "not assessed for production"; CPU latency to measure.
 
 **Confirm by measurement (S04):** compare with B on E1 and E3 — Tatev's 1–3 rating first, chrF as tie-breaker — within the latency budget. Confirmed by Tatev on 2026-10-30: B is still measured against A in S04.
+
+**S03 observations (2026-10-31, before the S04 measurement), settings: int8, 8 threads, beam 1:**
+- Speed: 0.22–0.79 s for short phrases; 1.1–2.55 s for 12-s segments, which is over the 1.5-s planning figure but kept every line within 5 s (max 2.88 s).
+- Added content: «Իմ անունն է Աննա։» → "My name is Anna. **I am 20 years old.**"; repeated sentences ("Today the weather is very hot. It is very hot today."; «Մեկ։» → "One. One. One.").
+- Names replaced, systematically: «Հայաստանի Հանրապետության» → "Republic of **Georgia**", «Հայաստանում» → "in **Georgia**" and "in **Kazakhstan**", «հայկական» → "**Bulgarian**", «հայոց այբուբենը» → "the **Persian** alphabet", «Մեսրոպ Մաշտոց» → "**Mehmed** Mashtots". The ASR text had the names right.
+- Consequence: the A-vs-B comparison in S04 is the most important one; named entities should be part of the rating. Settings to try on A before comparing: a larger beam and repetition limits (CTranslate2's translate_batch options, to verify in S04).
 
 **Sources:** [MADLAD-400-3B-MT CT2 card](https://huggingface.co/Nextcloud-AI/madlad400-3b-mt-ct2-int8/raw/aa32bbdeba7880eff2096ec044cb155a340a9400/README.md) · [CTranslate2 usage](https://huggingface.co/santhosh/madlad400-3b-ct2) · [Gemma 4 under Apache 2.0](https://opensource.googleblog.com/2026/03/gemma-4-expanding-the-gemmaverse-with-apache-20.html) · [Gemma 4 sizes](https://en.wikipedia.org/wiki/Gemma_(language_model)) · [gemma-4-12B-it-4bit (MLX)](https://huggingface.co/mlx-community/gemma-4-12B-it-4bit/discussions/2) · [TranslateGemma report](https://arxiv.org/pdf/2601.09012) · [arm-gemma-e4b paper](https://arxiv.org/abs/2609.03350) · [OPUS-MT hy-en listing](https://ai.azure.com/catalog/models/helsinki-nlp-opus-mt-hy-en) · [NLLB-200 card](https://huggingface.co/facebook/nllb-200-distilled-600M/blob/main/README.md)
 
@@ -388,3 +405,67 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 **Why:** B measures directly what "equal length" stood in for, no lost audio and no drift, with the same tolerance and far better precision. Gaps below the threshold stay visible in the recorded numbers.
 
 **Revisit if:** a dropout is heard in a recording whose clock gap passed; then the clock gap misses a kind of loss.
+
+---
+
+## D19 · How Silero VAD is run
+
+**Decided 2026-10-31 · Claude recommended A · Tatev chose A**
+
+**Decision:** M2 loads Silero VAD's ONNX file (`silero_vad.onnx`, release v6.2.1) with onnxruntime, which the project already needs for ASR, through a small wrapper of our own. At 16 kHz the model takes exactly 512 samples per call plus the last 64 samples of the previous call as context, a recurrent state of shape (2, 1, 128) and the sample rate; it returns a speech probability and the new state. Each source keeps its own state. M1's chunks are exactly 512 samples (D17), so no re-buffering is needed.
+
+**Options**
+- **A — the ONNX file with onnxruntime (chosen):** no new library; about 40 lines of our own code to unit-test.
+- B — the `silero-vad` pip package: ready-made helpers, but it requires torch and torchaudio (several hundred MB, a second inference stack), and torch's dependency tree brings licences outside D10.
+
+**Why:** the package's only extra value is helper code we can write in a few lines; the dependency cost is large.
+
+**Evidence:** the package's required dependencies are packaging, torch and torchaudio (PyPI Stats; the PyPI page). Silero's own ONNX wrapper and two independent ports use 512 samples + 64 samples of context at 16 kHz with a (2, 1, 128) state. The file's path in the repository is `src/silero_vad/data/silero_vad.onnx` at tag v6.2.1; its SHA-256 comes from a mirror that states it matches the upstream file byte for byte (one source; the download script stops on a mismatch).
+
+**Note:** D4 named the package version 6.2.3; the model file is pinned at v6.2.1 because that is the release with a published checksum.
+
+**Sources:** [silero-vad 6.2.2 on PyPI (dependencies)](https://pypi.org/project/silero-vad/6.2.2/) · [PyPI Stats: required dependencies](https://pypistats.org/packages/silero-vad) · [Silero's ONNX wrapper (copy)](https://huggingface.co/spaces/nuernie/ai-server/blob/main/whisper_live/vad.py) · [LiveKit's Silero ONNX wrapper](https://lab.atomdrift.org/file/218e0e7becbd45d41e107d97dfe55945e0f249d5730531b3e4bbe3be86974cff) · [v6.2.1 ONNX mirror with SHA-256](https://huggingface.co/bitsydarel/silero-vad-onnx)
+
+---
+
+## D20 · How the models are downloaded
+
+**Decided 2026-10-31 · Claude recommended A · Tatev chose A**
+
+**Decision:** `scripts/download_models.py` uses only the Python standard library. Hugging Face files come from a full commit hash, the Silero file from a release tag; every model file is checked against a pinned SHA-256, and the script stops on a mismatch, on a network error (no retries) or when disk space is short. Files go to `models/<folder>/` (git-ignored) with a SOURCE.txt recording source, version, licence and every file's SHA-256; licence files and model cards are saved alongside. `--verify` checks the files without the network. The program loads models from these paths, so huggingface_hub is never installed; it still sets `HF_HUB_OFFLINE=1` (D12).
+
+| Folder | Source @ version | Files | Size |
+|---|---|---|---|
+| `vad-silero` | snakers4/silero-vad @ v6.2.1 | silero_vad.onnx, LICENSE | ~2 MB |
+| `asr-hy-fastconformer` | OpenVoiceOS/stt_hy_fastconformer_hybrid_large_pc_onnx @ f7db1fa | model.onnx (fp32), vocab.txt, config.json, README.md | ~458 MB |
+| `mt-madlad400-3b-ct2-int8` | Nextcloud-AI/madlad400-3b-mt-ct2-int8 @ aa32bbd | model.bin, spiece.model, config.json, shared_vocabulary.json, README.md | ~2.96 GB |
+
+**Options**
+- **A — standard-library script (chosen).**
+- B — huggingface_hub's `snapshot_download`: less code, but it brings packages such as tqdm (MPL-2.0 AND MIT) and filelock (Unlicense) that D10 doesn't allow without an exception.
+
+**Why:** no new dependencies, every byte pinned and checked, and a missing model is a plain file error (F03).
+
+**Known gaps:** an interrupted download restarts that file from zero; the Hugging Face redirect path was not tested in Claude's workspace (no access to huggingface.co), so the first run on the Mac is the test.
+
+**Note:** the ASR repository also holds a `model.int8.onnx` (132 MB), although its card says there is no int8 variant. Not used (D5 is the fp32 model); a candidate if ASR latency becomes the bottleneck.
+
+**Sources:** [ASR export: files and commit](https://huggingface.co/OpenVoiceOS/stt_hy_fastconformer_hybrid_large_pc_onnx/tree/main) · [ASR model.onnx SHA-256](https://huggingface.co/OpenVoiceOS/stt_hy_fastconformer_hybrid_large_pc_onnx/blob/main/model.onnx) · [MADLAD CT2 files and commits](https://huggingface.co/Nextcloud-AI/madlad400-3b-mt-ct2-int8/commits/main) · [model.bin SHA-256](https://huggingface.co/Nextcloud-AI/madlad400-3b-mt-ct2-int8/blob/main/model.bin) · [spiece.model SHA-256](https://huggingface.co/Nextcloud-AI/madlad400-3b-mt-ct2-int8/blob/main/spiece.model) · [onnx-asr dependencies](https://awesome.ecosyste.ms/projects/github.com%2Fistupakov%2Fonnx-asr)
+
+**Licence check of the S03 libraries (2026-10-31, `pip install --dry-run --report` on the Mac, Python 3.14.5):** ctranslate2 4.8.4 MIT · flatbuffers 25.12.19 Apache-2.0 · numpy 2.5.4 BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 · onnx-asr 0.12.0 MIT · onnxruntime 1.31.1 MIT · packaging 26.3 Apache-2.0 OR BSD-2-Clause · protobuf 7.36.2 BSD-3-Clause · PyYAML 6.0.3 MIT · sentencepiece 0.2.2 Apache-2.0. All allowed by D10, all installed from wheels (cp314, abi3 or pure Python). ctranslate2 4.8.4 no longer requires setuptools (older versions did, which would have brought vendored LGPL code). A conda build labels onnxruntime "MIT AND BSL-1.0"; the PyPI wheel's metadata says MIT.
+
+---
+
+## D21 · Call-side label until M4 exists
+
+**Decided 2026-10-31 · Claude recommended A · Tatev chose A · temporary until S05**
+
+**Decision:** until M4 (S05), every system-audio segment is labelled "Speaker 1"; a startup line on stderr says that speaker labels are not implemented yet.
+
+**Options**
+- **A — a fixed "Speaker 1" placeholder (chosen):** the output format (T06, T12) can be tested now.
+- B — "Speaker ?": honest, but T06 stays open until S05.
+
+**Why:** the format is tested early; the stderr line keeps the placeholder from being mistaken for a working feature.
+
+**Ends:** when M4 replaces it in S05.
