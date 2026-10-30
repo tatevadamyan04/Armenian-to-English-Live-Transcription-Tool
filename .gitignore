@@ -1,0 +1,45 @@
+# Never commit recordings, model weights, tokens or keys
+# (CLAUDE.md "Git", TESTS.md G03).
+
+# Recordings and models
+data/
+models/
+
+# Audio files anywhere in the repository
+*.wav
+*.flac
+*.mp3
+*.m4a
+*.aac
+*.ogg
+*.opus
+*.aif
+*.aiff
+*.caf
+
+# Model weights and checkpoints
+*.onnx
+*.onnx.data
+*.bin
+*.safetensors
+*.nemo
+*.pt
+*.pth
+*.ckpt
+*.gguf
+
+# Tokens and keys
+.env
+.env.*
+
+# Python environment and build output
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# macOS
+.DS_Store
