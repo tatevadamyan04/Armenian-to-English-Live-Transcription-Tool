@@ -29,7 +29,7 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 | D21 | Call-side label before M4 | fixed "Speaker 1" placeholder until S05 | decided — temporary |
 | D22 | Model B comparisons | cut; A measured only, A's MT decoding tuned | decided |
 | D23 | MT decoding and segment cap | beam 4, repetition penalty 1.2, no-repeat 3-gram; segments cut at 8 s | decided — confirm by T14/T15 |
-| D24 | Guards on short ASR text and MT output length | < 2 Armenian letters → no text; output ≤ 2 × input tokens + 16 | decided — ratio to confirm |
+| D24 | Guards on short ASR text and MT output length | < 2 Armenian letters → no text; output ≤ 2 × input tokens + 16 | decided |
 
 ---
 
@@ -148,7 +148,9 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 - On 3 s of digital zeros the model alone returned «Ինչ էին։»: the CTC decoder does invent text on silence, contrary to the expectation above (K10). In the program the VAD keeps silence away from ASR (T20 passed); recorded as a known limitation (xfail test).
 - At a forced 12-s cut the word split by the cut is misrecognised (T16) — a segmentation issue for S06, not a model choice.
 
-**S04 measurement (2026-11-01), E1 (25 read phrases, MacBook mic), end to end:** CER 1.93% (12/622 chars), WER 5.41% (6/111 words), 20/25 identical after the TESTS.md §3.2 normalisation. Errors: «կրկնում» for «կրկնեք», a missing «է», «անն է» for «Աննա», «խոսում եմ եք» for «խոսում եք», «ունի» for «ունեմ». Read speech is the best case; E3 (call audio) is still to score. B not measured (D22).
+**S04 measurement (2026-11-01), E1 (25 read phrases, MacBook mic), end to end:** CER 1.93% (12/622 chars), WER 5.41% (6/111 words), 20/25 identical after the TESTS.md §3.2 normalisation. Errors: «կրկնում» for «կրկնեք», a missing «է», «անն է» for «Աննա», «խոսում եմ եք» for «խոսում եք», «ունի» for «ունեմ». Read speech is the best case. B not measured (D22).
+
+**S04 measurement (2026-11-01), E3 (Zoom call, system side, 0:13–2:01, 12 reference turns, 17 segments):** CER 30.39% (355/1168 chars), WER 50.46% (110/218 words). The speech is colloquial («խփելա», «կարացե», «պրոստո») and half the turns overlap (two people talking at once, 6 of 12 turns `A+B`). The reference was made by correcting the program's output (D9 revision), so these figures are somewhat too low. For comparison, ArmBench reports 60.78% WER for this model on its "Movies" dialogue set.
 
 **Sources:** [ArmBench-ASR](https://metric-ai-armbench-asr.static.hf.space/index.html) · [ArmBench release (Runtime Wire)](https://runtimewire.com/article/metric-armbench-asr-armenian-speech-benchmark) · [NVIDIA model files and licence](https://huggingface.co/nvidia/stt_hy_fastconformer_hybrid_large_pc/tree/refs%2Fpr%2F3) · [ONNX export](https://huggingface.co/OpenVoiceOS/stt_hy_fastconformer_hybrid_large_pc_onnx) · [onnx-asr](https://pypi.org/project/onnx-asr/) · [NeMo README, Apple silicon section (fork copy)](https://github.com/michalivne/NeMo) · [BuzzASR/armenian](https://huggingface.co/BuzzASR/armenian) · [BuzzASR paper](https://arxiv.org/abs/2609.09554) · [Chillarmo turbo licence](https://mixpeek.com/model/Chillarmo/whisper-large-v3-turbo-armenian) · [SeamlessM4T v2 licence](https://www.endorlabs.com/ai-model/facebook-seamless-m4t-v2-large) · [Careless Whisper (Whisper hallucinations)](https://arxiv.org/abs/2402.08021v2)
 
@@ -249,6 +251,7 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 **Revision 2026-11-01 (S04) · Claude recommended A · Tatev chose A — how the E3 reference is made and where it lives:**
 - **Made by correcting the program's output**, not transcribed from scratch: `eval/segment_offline.py` runs the program's own segmenter, ASR and MT over `data/e3/system.wav`; Tatev corrects the Armenian of every segment in the first 3 minutes, gives each segment a speaker letter (A, B, C; `A+B` for a segment with two people) for the whole call, and writes her own English for ~15 segments. Option B (transcribing from scratch, as planned) gives an unbiased CER but takes ~45 min more, which the schedule doesn't have (D22). **Consequence:** errors Tatev doesn't notice stay in the reference, so E3's CER is somewhat too low; the README says so.
 - **Kept in `data/e3/e3_ref.tsv` (git-ignored), not in `eval/refs/`:** the participants agreed to a recording that "stays only on my computer and won't be published"; the reviewers read the repository. Only the numbers are reported. E1 and long.tsv (Tatev's own sentences) stay committed.
+- **Scope cut the same day (Tatev):** no English for E3 (MT is rated on E1 and long.tsv only, so conversational MT is not rated); Armenian corrected for 0:13–2:01 only; speaker letters for 0:00–7:20. The recording is 11:00; the rest is not used for scoring.
 
 **Sources:** [FLEURS](https://www.huggingface.co/datasets/google/fleurs/tree/main) · [ArmBench-ASR](https://metric-ai-armbench-asr.static.hf.space/index.html)
 
@@ -555,4 +558,4 @@ None of the settings fixed the replaced names (D6).
 
 **Why:** the short-text guard removes an observed invented line; the length limit bounds every translation's time whatever the model does, at no cost when outputs are normal.
 
-**To confirm:** the ratio 2 × + 16 must sit above the largest output/input token ratio on E1, long.tsv and E3 so no normal translation is cut (S04 check). A one-letter real reply such as «է» is lost (rare).
+**Checked 2026-11-01:** over 122 translations (E1 and long.tsv at D23 settings, E3 at D23), the largest output/input token ratios were 3.25 (13 output tokens for 4 input, «Հ։», now dropped by the first guard) and 2.17 (13 for 6, «Հովհ.»). The limit for those inputs is 24 and 28 tokens, so no measured translation would have been cut. **Cost:** a one-letter real reply such as «է» is lost (rare).
