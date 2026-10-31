@@ -1,27 +1,25 @@
 """python -m hyen — the command line (PLAN.md §5, M7).
 
-Session 02 provides two things:
   --list-devices          every input device with its index (T01)
-  --mic DEV --system DEV  a capture check: opens both inputs and prints one peak-level
-                          line per 2 s of audio on stderr until Ctrl+C (T02)
-Session 03 replaces the capture check with the transcription pipeline.
+  --mic DEV --system DEV  the live session: transcribe and translate both sources until Ctrl+C
 """
 
 from __future__ import annotations
 
+import os
+
+os.environ["HF_HUB_OFFLINE"] = "1"  # local only at runtime (D12); set before any model library is imported
+
 import argparse
 import sys
-import time
 
 from hyen import audio
-
-LEVEL_WINDOW_SECONDS = 2
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m hyen",
-        description="Live Armenian-to-English call transcription (session 02: capture check).",
+        description="Live Armenian-to-English call transcription.",
     )
     parser.add_argument("--list-devices", action="store_true", help="print every input device with its index and exit")
     parser.add_argument("--mic", metavar="DEVICE", help='microphone: exact name or index, e.g. "MacBook Pro Microphone"')
@@ -51,43 +49,15 @@ def main(argv: list[str] | None = None) -> int:
     except audio.DeviceError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
-    return capture_check(mic, system)
 
+    from hyen.modelfiles import ModelMissingError
+    from hyen.pipeline import run_live
 
-def capture_check(mic: audio.InputDevice, system: audio.InputDevice) -> int:
-    """Print the peak level of both inputs for every 2 s of microphone audio, until Ctrl+C."""
-    print(
-        f"Capturing  mic: {audio.describe(mic)}  ·  system: {audio.describe(system)}  → 16 kHz mono",
-        file=sys.stderr,
-    )
-    print(f"Capture check: one level line per {LEVEL_WINDOW_SECONDS} s of audio. Ctrl+C stops.", file=sys.stderr)
-    window = LEVEL_WINDOW_SECONDS * audio.SAMPLE_RATE
-    with audio.Capture({"mic": mic, "system": system}) as capture:
-        capture.start(time.monotonic())
-        try:
-            counted, mic_peak, system_peak = 0, 0.0, 0.0
-            while True:
-                chunk = capture.get("mic")
-                mic_peak = max(mic_peak, audio.peak(chunk.samples))
-                for other in capture.drain("system"):
-                    system_peak = max(system_peak, audio.peak(other.samples))
-                counted += len(chunk.samples)
-                if counted >= window:
-                    end = chunk.t_start + len(chunk.samples) / audio.SAMPLE_RATE
-                    print(
-                        f"[{clock(end)}] mic {audio.dbfs(mic_peak):>11} · system {audio.dbfs(system_peak):>11}",
-                        file=sys.stderr,
-                    )
-                    counted, mic_peak, system_peak = counted - window, 0.0, 0.0
-        except KeyboardInterrupt:
-            print("Stopped.", file=sys.stderr)
-    return 0
-
-
-def clock(seconds: float) -> str:
-    """Session time as HH:MM:SS."""
-    whole = int(seconds)
-    return f"{whole // 3600:02d}:{whole // 60 % 60:02d}:{whole % 60:02d}"
+    try:
+        return run_live(mic, system)
+    except ModelMissingError as error:  # F03: name the model and the download command, exit non-zero
+        print(f"error: {error}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
