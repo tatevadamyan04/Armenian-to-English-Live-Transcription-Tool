@@ -68,7 +68,7 @@ Applied identically to hypothesis and reference before CER/WER:
 
 Numbers are not normalised, which is why E1 avoids digits.
 
-Revised 2026-10-31 (S03): step 3 was "replace with a space" for all marks; that would split «ի՞նչ» into «ի նչ» and count a correct word as wrong (seen in E1: e1_05, e1_14). To confirm with Tatev at the start of S04.
+Revised 2026-10-31 (S03): step 3 was "replace with a space" for all marks; that would split «ի՞նչ» into «ի նչ» and count a correct word as wrong (seen in E1: e1_05, e1_14). Confirmed by Tatev on 2026-11-01 (S04).
 
 ### 3.3 Metrics
 
@@ -83,7 +83,7 @@ Revised 2026-10-31 (S03): step 3 was "replace with a space" for all marks; that 
 |---|---|---|---|
 | M01 | Score model A on E2 with our scripts | WER within ~5 points of ArmBench's FLEURS 15.00%; if not, find out why (normalisation, decoder, audio path) before comparing models. ArmBench doesn't publish its normalisation, so a small gap is expected | |
 
-### 3.5 Model selection rule (S04; D5 and D6)
+### 3.5 Model selection rule (S04; D5 and D6) — not applied: B comparisons cut (D22)
 
 - **ASR:** lowest CER on E3, then on E1, within the latency budget (PLAN.md §5).
 - **Translation:** highest mean rating on E1 + E3, chrF as tie-breaker, within the budget.
