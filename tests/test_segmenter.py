@@ -86,8 +86,8 @@ def test_long_speech_is_cut_at_the_cap_and_nothing_is_lost():  # T16
     config = SegmenterConfig()
     speech = 30 * 1000 // 32  # ~30 s with no pause
     _, segments = run("s" * speech + "." * 40, config)
-    assert len(segments) == 3  # 12 s + 12 s + ~6 s
-    assert [segment.cut for segment in segments] == [True, True, False]
+    assert len(segments) == 4  # 8 s + 8 s + 8 s + ~6 s (cap 250 chunks, D23)
+    assert [segment.cut for segment in segments] == [True, True, True, False]
     assert all(len(segment.samples) <= config.max_chunks * CHUNK for segment in segments)
     for before, after in zip(segments, segments[1:]):
         assert after.t_speech_start == pytest.approx(before.t_speech_end)  # no gap between pieces

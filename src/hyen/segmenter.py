@@ -9,7 +9,7 @@ Turns the endless chunk stream of one source into Segments, one per spoken phras
   inside a word from ending the phrase.
 - The phrase ends after END_SILENCE chunks in a row below CONTINUE (19 × 32 ms = 608 ms).
   The segment then ends TAIL chunks after the last speech chunk.
-- A phrase that reaches MAX_CHUNKS (375 × 32 ms = 12 s) is cut there, so long monologues
+- A phrase that reaches MAX_CHUNKS (250 × 32 ms = 8 s; 12 s until D23) is cut there, so long monologues
   still print (T16); the speech that follows becomes the next segment without a gap.
 - A segment with less than MIN_SPEECH chunks of speech (8 × 32 ms = 256 ms) is dropped
   and noted on stderr: clicks and short noises shouldn't reach ASR (T20, T21).
@@ -43,7 +43,7 @@ class SegmenterConfig:
     end_silence: int = 19  # chunks below `continue_` that end a phrase (608 ms)
     pre_roll: int = 3  # chunks kept from before the start (96 ms)
     tail: int = 3  # chunks kept after the last speech chunk (96 ms)
-    max_chunks: int = 375  # a phrase is cut at this length (12.0 s)
+    max_chunks: int = 250  # a phrase is cut at this length (8.0 s; D23 keeps MT time bounded)
     min_speech: int = 8  # fewer speech chunks than this → dropped (256 ms)
 
 

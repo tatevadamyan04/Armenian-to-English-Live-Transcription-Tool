@@ -10,11 +10,11 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 | D2 | System-audio capture | BlackHole 2ch + Multi-Output Device | decided |
 | D3 | Listening and microphone | AirPods for listening, MacBook mic as input | decided |
 | D4 | Phrase segmentation | Silero VAD | decided — licence checked in S03 (MIT) |
-| D5 | Armenian ASR | NVIDIA hy FastConformer (ONNX, onnx-asr) | decided — confirm by measurement |
-| D6 | Translation | MADLAD-400-3B-MT (CTranslate2 int8) | decided — confirm by measurement |
+| D5 | Armenian ASR | NVIDIA hy FastConformer (ONNX, onnx-asr) | decided — B comparison cut 2026-11-01 (D22) |
+| D6 | Translation | MADLAD-400-3B-MT (CTranslate2 int8) | decided — B comparison cut 2026-11-01 (D22) |
 | D7 | Speaker labels | ECAPA embeddings + online clustering | decided |
 | D8 | Pipeline structure | one process, threads + queues, one inference worker | decided |
-| D9 | Evaluation data and metrics | E1 read + E2 FLEURS + E3 call | decided |
+| D9 | Evaluation data and metrics | E1 read + E2 FLEURS + E3 call | decided — E3 reference revised 2026-11-01 |
 | D10 | Licence policy | permissive only: MIT, MIT-0, Apache-2.0, BSD, 0BSD, Zlib, CC0-1.0, CC-BY-4.0 | decided — revised 2026-10-30 |
 | D11 | Workflow | Claude sends files; Tatev commits and runs commands | decided |
 | D12 | Proof of "local only" | runs with networking off | decided |
@@ -27,6 +27,9 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 | D19 | Running Silero VAD | the ONNX file directly with onnxruntime; no torch | decided |
 | D20 | Downloading the models | standard-library script; pinned versions and SHA-256; no huggingface_hub | decided |
 | D21 | Call-side label before M4 | fixed "Speaker 1" placeholder until S05 | decided — temporary |
+| D22 | Model B comparisons | cut; A measured only, A's MT decoding tuned | decided |
+| D23 | MT decoding and segment cap | beam 4, repetition penalty 1.2, no-repeat 3-gram; segments cut at 8 s | decided — confirm by T14/T15 |
+| D24 | Guards on short ASR text and MT output length | < 2 Armenian letters → no text; output ≤ 2 × input tokens + 16 | decided — ratio to confirm |
 
 ---
 
@@ -145,6 +148,8 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 - On 3 s of digital zeros the model alone returned «Ինչ էին։»: the CTC decoder does invent text on silence, contrary to the expectation above (K10). In the program the VAD keeps silence away from ASR (T20 passed); recorded as a known limitation (xfail test).
 - At a forced 12-s cut the word split by the cut is misrecognised (T16) — a segmentation issue for S06, not a model choice.
 
+**S04 measurement (2026-11-01), E1 (25 read phrases, MacBook mic), end to end:** CER 1.93% (12/622 chars), WER 5.41% (6/111 words), 20/25 identical after the TESTS.md §3.2 normalisation. Errors: «կրկնում» for «կրկնեք», a missing «է», «անն է» for «Աննա», «խոսում եմ եք» for «խոսում եք», «ունի» for «ունեմ». Read speech is the best case; E3 (call audio) is still to score. B not measured (D22).
+
 **Sources:** [ArmBench-ASR](https://metric-ai-armbench-asr.static.hf.space/index.html) · [ArmBench release (Runtime Wire)](https://runtimewire.com/article/metric-armbench-asr-armenian-speech-benchmark) · [NVIDIA model files and licence](https://huggingface.co/nvidia/stt_hy_fastconformer_hybrid_large_pc/tree/refs%2Fpr%2F3) · [ONNX export](https://huggingface.co/OpenVoiceOS/stt_hy_fastconformer_hybrid_large_pc_onnx) · [onnx-asr](https://pypi.org/project/onnx-asr/) · [NeMo README, Apple silicon section (fork copy)](https://github.com/michalivne/NeMo) · [BuzzASR/armenian](https://huggingface.co/BuzzASR/armenian) · [BuzzASR paper](https://arxiv.org/abs/2609.09554) · [Chillarmo turbo licence](https://mixpeek.com/model/Chillarmo/whisper-large-v3-turbo-armenian) · [SeamlessM4T v2 licence](https://www.endorlabs.com/ai-model/facebook-seamless-m4t-v2-large) · [Careless Whisper (Whisper hallucinations)](https://arxiv.org/abs/2402.08021v2)
 
 ---
@@ -173,6 +178,10 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 - Added content: «Իմ անունն է Աննա։» → "My name is Anna. **I am 20 years old.**"; repeated sentences ("Today the weather is very hot. It is very hot today."; «Մեկ։» → "One. One. One.").
 - Names replaced, systematically: «Հայաստանի Հանրապետության» → "Republic of **Georgia**", «Հայաստանում» → "in **Georgia**" and "in **Kazakhstan**", «հայկական» → "**Bulgarian**", «հայոց այբուբենը» → "the **Persian** alphabet", «Մեսրոպ Մաշտոց» → "**Mehmed** Mashtots". The ASR text had the names right.
 - Consequence: the A-vs-B comparison in S04 is the most important one; named entities should be part of the rating. Settings to try on A before comparing: a larger beam and repetition limits (CTranslate2's translate_batch options, to verify in S04).
+
+**S04 measurements (2026-11-01):** see D23 for decoding. On Tatev's reference Armenian (E1, MT only), chrF 80.6 at the S03 settings and 82.3 at the D23 settings. Names on long.tsv (5 sentences, 15–23 words; drafted by Claude, checked by Tatev): «Հայաստան» → "Georgia" in 2 of 2 sentences and «հայոց»/«հայերը» → "Persian"/"the Persians", **under every decoding setting tried** (beam 1, beam 2 and 4, with and without repetition limits). «Հայկական խոհանոց» → "Armenian cuisine" was right. Other names anglicised or mangled (Tolman, gulash, Gaghart, Lake Sevana).
+
+**Names — decided 2026-11-01 · Claude recommended A · Tatev chose A:** a known limitation, documented in the README with these examples. Options: A — limitation (chosen; no time cost, S05 has priority); B — a glossary replacing a few Armenian name forms with English before MT (terminology injection; Armenian case endings make a hand list partial; whether MADLAD keeps a Latin word in Armenian input is unverified; ~1 h); C — reopen D22 and test Gemma 4 (2–3 h). Improvement for the README: B, or an LLM translator measured against MADLAD.
 
 **Sources:** [MADLAD-400-3B-MT CT2 card](https://huggingface.co/Nextcloud-AI/madlad400-3b-mt-ct2-int8/raw/aa32bbdeba7880eff2096ec044cb155a340a9400/README.md) · [CTranslate2 usage](https://huggingface.co/santhosh/madlad400-3b-ct2) · [Gemma 4 under Apache 2.0](https://opensource.googleblog.com/2026/03/gemma-4-expanding-the-gemmaverse-with-apache-20.html) · [Gemma 4 sizes](https://en.wikipedia.org/wiki/Gemma_(language_model)) · [gemma-4-12B-it-4bit (MLX)](https://huggingface.co/mlx-community/gemma-4-12B-it-4bit/discussions/2) · [TranslateGemma report](https://arxiv.org/pdf/2601.09012) · [arm-gemma-e4b paper](https://arxiv.org/abs/2609.03350) · [OPUS-MT hy-en listing](https://ai.azure.com/catalog/models/helsinki-nlp-opus-mt-hy-en) · [NLLB-200 card](https://huggingface.co/facebook/nllb-200-distilled-600M/blob/main/README.md)
 
@@ -236,6 +245,10 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 **Why:** E3 is the only realistic test of dialogue and speakers; E2 validates the scoring; E1 is cheap and controlled.
 
 **Rule:** recordings live in `data/` (git-ignored); only reference texts are committed (DL4).
+
+**Revision 2026-11-01 (S04) · Claude recommended A · Tatev chose A — how the E3 reference is made and where it lives:**
+- **Made by correcting the program's output**, not transcribed from scratch: `eval/segment_offline.py` runs the program's own segmenter, ASR and MT over `data/e3/system.wav`; Tatev corrects the Armenian of every segment in the first 3 minutes, gives each segment a speaker letter (A, B, C; `A+B` for a segment with two people) for the whole call, and writes her own English for ~15 segments. Option B (transcribing from scratch, as planned) gives an unbiased CER but takes ~45 min more, which the schedule doesn't have (D22). **Consequence:** errors Tatev doesn't notice stay in the reference, so E3's CER is somewhat too low; the README says so.
+- **Kept in `data/e3/e3_ref.tsv` (git-ignored), not in `eval/refs/`:** the participants agreed to a recording that "stays only on my computer and won't be published"; the reviewers read the repository. Only the numbers are reported. E1 and long.tsv (Tatev's own sentences) stay committed.
 
 **Sources:** [FLEURS](https://www.huggingface.co/datasets/google/fleurs/tree/main) · [ArmBench-ASR](https://metric-ai-armbench-asr.static.hf.space/index.html)
 
@@ -469,3 +482,77 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 **Why:** the format is tested early; the stderr line keeps the placeholder from being mistaken for a working feature.
 
 **Ends:** when M4 replaces it in S05.
+
+---
+
+## D22 · Cutting the model B comparisons
+
+**Decided 2026-11-01 · Claude recommended A · Tatev chose A · revises the "confirm by measurement" part of D5 and D6**
+
+**Decision:** BuzzASR (D5-B) and Gemma 4 12B (D6-B) are not measured. S04 measures only the chosen models on E1, E2 and E3. About 30 minutes go into MADLAD's decoding settings (beam size, repetition limits) to reduce the added content and the replaced names seen in S03. The name substitutions are reported in the README as a known limitation, with the examples from D6.
+
+**Options**
+- **A — cut both B comparisons (chosen).**
+- B — cut BuzzASR, keep Gemma 4 for MT: targets the most visible failure, but needs a licence check of mlx-lm and its dependencies, a ~7 GB download and a few hours, taken from S05 or S06.
+- C — keep both: does not fit in the time left.
+
+**Why (new evidence: the schedule):** S04 starts at 00:50 on the deadline day (23:59 Yerevan time), with S04–S07, the E3 recording and the rehearsal still to do — about 12 h of planned work. Speaker labels (R7, R8) are Must requirements and are still the D21 placeholder; model comparisons are not a Must. PLAN.md §9 already names the B comparisons as the first item to cut.
+
+**Consequence:** C5 ("models chosen deliberately") rests on the research in D5/D6 and on A's measured numbers, not on a head-to-head comparison. The README says so. K1 and K3 stay open risks.
+
+**Revisit if:** the deadline moves, or A's MT rating on E1 + E3 is so low that the live result is unusable.
+
+---
+
+## D23 · MT decoding settings and the segment cap
+
+**Decided 2026-11-01 · Claude recommended A · Tatev chose A · confirm by T14/T15**
+
+**Decision:** MADLAD decodes with beam 4, repetition penalty 1.2 and no repeated 3-token sequence (CTranslate2 TranslationOptions `beam_size`, `repetition_penalty`, `no_repeat_ngram_size`). M2 cuts a phrase at 250 chunks (8.0 s) instead of 375 (12.0 s), so translation time per segment stays near what was measured.
+
+**Evidence (S04, MT only on Tatev's reference Armenian, `eval/run_offline.py --mt-input ref`):**
+
+| Setting | E1 chrF | E1 repeats / added content | E1 MT median / max | long.tsv MT median / max |
+|---|---|---|---|---|
+| beam 1 (S03) | 80.6 | e1_08 repeated; e1_13 "I am 20 years old" | — | 1.22 / 1.60 s |
+| beam 1 + limits | 79.9 | invented: "It's 10 degrees Celsius today", "I am 20 years old and from Russia" | 0.32 / 0.66 s | 1.20 / 1.22 s |
+| beam 2 + limits | — | none on e1_08, 10, 13, 16, 18, 20 (other 19 not reviewed) | 0.48 / 1.02 s | 1.75 / 1.97 s |
+| beam 4 | 77.8 | e1_08, 10, 13, 16 doubled | 0.57 / 0.83 s | — |
+| **beam 4 + limits** | **82.3** | **none in 25** | 0.54 / 0.99 s | 1.91 / 2.04 s* |
+| beam 4 + limits, no-repeat 4 | — | — | — | 1.83 / 1.92 s* |
+
+*p95 from the first version of the summary, which extrapolated past the maximum for n = 5; medians and maxima are right. "Limits" = repetition penalty 1.2, no-repeat 3.
+
+None of the settings fixed the replaced names (D6).
+
+**Options**
+- **A — beam 4 + limits, cap 8 s (chosen):** the only setting clean on all of E1, with the best chrF.
+- B — beam 2 + limits, cap 8 s: ~0.15 s faster per long sentence; 19 E1 lines not reviewed.
+- C — beam 4 + limits, cap 12 s: no change to M2, but beam 1 already took 2.55 s on a 12-s segment in S03; scaled by long.tsv's beam-4/beam-1 ratio (1.91/1.22) that is ~4 s of MT, + 0.6 s end-of-phrase wait — over 4.6 s before any queue wait (estimate).
+
+**Why:** invented content is worse than repetition, because it reads as fact; beam 1 + limits invented it. An 8-s segment holds about the 15–23 words of long.tsv (MT max ≈ 2 s): ≈ 0.6 s wait + 0.1 s ASR + 2 s MT + ≤ 1 s queue ≈ 3.7 s (estimate; T14/T15 measure it).
+
+**Consequences:** more cuts in long monologues, so the S06 fix (cut at the quietest chunk before the cap, T16) matters more. tests/test_segmenter.py T16 case now expects 4 pieces for 30 s.
+
+**Revisit if:** T14/T15 show MT pushing any segment over 5 s → beam 2 (B), or a shorter cap.
+
+---
+
+## D24 · Guards: very short ASR text, MT output length
+
+**Decided 2026-11-01 · Claude recommended A · Tatev chose A**
+
+**Decision:**
+- M3 treats recognised text with fewer than 2 Armenian letters as no text, with a note on stderr; the worker drops it like empty text. Two-letter replies («հա», «ու») stay.
+- M5 limits each translation to at most 2 × the input tokens + 16 (never more than 256). If an output reaches the limit, stderr says it may be cut short.
+
+**Evidence (E3, S04):** segment system-27 (1.2 s) was recognised as «Հ։». At the S03 settings MT produced "H: H: H: …" up to the 256-token limit in 8.16 s, which alone breaks C1. With D23 it took 0.88 s but invented a reply: "H.: I am not sure what you mean by that." With D23 on the whole of E3 (92 segments, 16 cut at 8 s) the slowest MT was 2.08 s and the slowest ASR 0.12 s.
+
+**Options**
+- **A — both guards (chosen).**
+- B — only the short-text guard: fixes what was seen; a runaway stays possible.
+- C — neither; both listed as limitations.
+
+**Why:** the short-text guard removes an observed invented line; the length limit bounds every translation's time whatever the model does, at no cost when outputs are normal.
+
+**To confirm:** the ratio 2 × + 16 must sit above the largest output/input token ratio on E1, long.tsv and E3 so no normal translation is cut (S04 check). A one-letter real reply such as «է» is lost (rare).
