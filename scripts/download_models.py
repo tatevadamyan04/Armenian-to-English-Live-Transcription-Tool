@@ -103,6 +103,20 @@ MODELS = (
             File("README.md", None, 10_000),
         ),
     ),
+    Model(  # D7 (S05 revision) · speaker embeddings, run by sherpa-onnx
+        folder="spk-wespeaker",
+        source="https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models",
+        version="speaker-recongition-models",  # release tag (spelled this way upstream)
+        url_base="https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models",
+        licence="CC-BY-4.0 (WeSpeaker voxceleb_resnet34_LM: WeSpeaker's VoxCeleb models follow the "
+                "VoxCeleb licence; ONNX export by sherpa-onnx, Apache-2.0)",
+        files=(
+            # Release assets can be replaced under the same tag, so the SHA-256 is what pins the bytes.
+            # Value from omni-dev's pinned manifest (one source); confirmed on the Mac in S05.
+            File("wespeaker_en_voxceleb_resnet34_LM.onnx",
+                 "e9848563da86f263117134dfd7ad63c92355b37de492b55e325400c9d9c39012", 26_500_000),
+        ),
+    ),
 )
 
 

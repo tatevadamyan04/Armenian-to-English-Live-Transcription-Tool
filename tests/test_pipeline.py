@@ -1,8 +1,9 @@
 """M6 output and M7 pipeline with fake capture and fake models (PLAN.md §8).
 
 From the requirements: the three-line layout with the speech-start time (R9, T12),
-"Me" for every mic segment (R6, T9) and the placeholder label for the call side (D21),
-empty ASR text dropped, and an exception in any thread stopping the program (F04).
+"Me" for every mic segment (R6, T9) and M4's label for the call side (R7), the speaker
+stage in the timing log, empty ASR text dropped, and an exception in any thread stopping
+the program (F04).
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from hyen.audio import AudioChunk, CaptureError
 from hyen.output import Result, clock, format_result
 from hyen.pipeline import Pipeline
 from hyen.segmenter import CHUNK, CHUNK_SECONDS, Segmenter
+from hyen.speakers import SpeakerLabeler
 
 
 def test_layout():  # T12
@@ -64,14 +66,25 @@ class FakeRecognizer:
         return self.text
 
 
+class FakeEmbedder:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def embed(self, samples: np.ndarray) -> np.ndarray:
+        self.calls += 1
+        return np.array([1.0, 0.0, 0.0])
+
+
 class FakeTranslator:
     def translate(self, hy: str) -> str:
         return f"EN({hy})"
 
 
-def make_pipeline(capture, recognizer, logs, out):
+def make_pipeline(capture, recognizer, logs, out, embedder=None):
     segmenters = {name: Segmenter(name, loud, log=logs.append) for name in ("mic", "system")}
-    return Pipeline(capture, segmenters, recognizer, FakeTranslator(), time.monotonic, time.monotonic(), out, logs.append)
+    labeler = SpeakerLabeler(embedder or FakeEmbedder(), log=logs.append)
+    return Pipeline(capture, segmenters, recognizer, labeler, FakeTranslator(), time.monotonic, time.monotonic(),
+                    out, logs.append)
 
 
 def run_briefly(pipeline, seconds: float = 0.5):
@@ -90,13 +103,27 @@ def _catch(function):
         return error
 
 
-def test_both_sources_are_printed_with_their_labels():  # T06 format, T09, D21
-    out, logs = io.StringIO(), []
-    run_briefly(make_pipeline(FakeCapture({"mic", "system"}), FakeRecognizer(), logs, out))
+def test_both_sources_are_printed_with_their_labels():  # T06 format, T09, R7
+    out, logs, embedder = io.StringIO(), [], FakeEmbedder()
+    run_briefly(make_pipeline(FakeCapture({"mic", "system"}), FakeRecognizer(), logs, out, embedder))
     text = out.getvalue()
     assert "[00:00:00] Me\n  HY: Բարև\n  EN: EN(Բարև)\n" in text
     assert "[00:00:00] Speaker 1\n  HY: Բարև\n  EN: EN(Բարև)\n" in text
-    assert sum(line.startswith("timing ") for line in logs) == 2
+    timings = [line for line in logs if line.startswith("timing ")]
+    assert len(timings) == 2
+    assert all(" · spk " in line for line in timings)
+    assert embedder.calls == 1  # the call-side segment only; mic segments are never embedded
+
+
+def test_embedder_error_stops_the_pipeline():  # F04 for M4
+    class Broken:
+        def embed(self, samples):
+            raise RuntimeError("speaker model broke")
+
+    out, logs = io.StringIO(), []
+    error = run_briefly(make_pipeline(FakeCapture({"system"}), FakeRecognizer(), logs, out, Broken()))
+    assert isinstance(error, RuntimeError) and "speaker model broke" in str(error)
+    assert out.getvalue() == ""
 
 
 def test_empty_asr_text_is_dropped_with_a_note():

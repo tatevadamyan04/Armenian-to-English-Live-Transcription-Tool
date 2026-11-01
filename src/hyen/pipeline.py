@@ -3,12 +3,12 @@
 Threads, each started by Pipeline.run():
 
     capture reader (M1, one per source) → segmenter thread (M2, one per source)
-        → one queue → inference worker: ASR (M3) → label → translation (M5) → print (M6)
+        → one queue → inference worker: ASR (M3) → speaker label (M4) → translation (M5) → print (M6)
 
 - Every model is loaded before the session clock starts (run_live), so loading time
   never counts as latency.
-- Labels: "Me" for the microphone (R6). Until M4 exists (S05), every call-side segment
-  is "Speaker 1" (D21); a startup line on stderr says so.
+- Labels come from M4 (speakers.py): "Me" for the microphone (R6), "Speaker N" for the
+  call side (R7, R8). The label's reason and similarity go into the timing line on stderr.
 - A segment whose ASR text is empty is dropped with a note on stderr (PLAN.md §5, M3).
 - One timing line per segment goes to stderr. Latency = print time − end of speech, as in
   PLAN.md §5; it includes the silence wait that ends a phrase.
@@ -30,9 +30,9 @@ import numpy as np
 
 from hyen.output import Result, print_result
 from hyen.segmenter import Segment, Segmenter
+from hyen.speakers import Assignment
 
 LATENCY_LIMIT = 5.0  # C1
-SYSTEM_PLACEHOLDER = "Speaker 1"  # D21, until M4 (S05)
 
 
 class ChunkSource(Protocol):
@@ -47,8 +47,8 @@ class Translator(Protocol):
     def translate(self, hy: str) -> str: ...
 
 
-def label_for(segment: Segment) -> str:
-    return "Me" if segment.source == "mic" else SYSTEM_PLACEHOLDER
+class Labeler(Protocol):
+    def assign(self, segment: Segment) -> Assignment: ...
 
 
 class Pipeline:
@@ -57,6 +57,7 @@ class Pipeline:
         capture: ChunkSource,
         segmenters: dict[str, Segmenter],
         recognizer: Recognizer,
+        labeler: Labeler,
         translator: Translator,
         clock: Callable[[], float],
         t0: float,
@@ -66,6 +67,7 @@ class Pipeline:
         self.capture = capture
         self.segmenters = segmenters
         self.recognizer = recognizer
+        self.labeler = labeler
         self.translator = translator
         self.clock = clock
         self.t0 = t0
@@ -115,9 +117,11 @@ class Pipeline:
         if not hy:
             self.log(f"{segment.seg_id}: ASR returned no text; segment dropped")
             return
+        assignment = self.labeler.assign(segment)
+        labelled = self.now()
         en = self.translator.translate(hy)
         translated = self.now()
-        result = Result(segment.seg_id, segment.t_speech_start, label_for(segment), hy, en)
+        result = Result(segment.seg_id, segment.t_speech_start, assignment.label, hy, en)
         print_result(result, self.out)
         printed = self.now()
         latency = printed - segment.t_speech_end
@@ -125,16 +129,22 @@ class Pipeline:
             f"timing {segment.seg_id}: speech {segment.t_speech_end - segment.t_speech_start:.2f} s"
             f"{' (cut)' if segment.cut else ''} · end-detect {segment.t_end_detected - segment.t_speech_end:.2f}"
             f" · queue {started - segment.t_end_detected:.2f} · asr {recognised - started:.2f}"
-            f" · mt {translated - recognised:.2f} · latency {latency:.2f} s"
+            f" · spk {labelled - recognised:.2f} ({assignment.reason}{_similarity(assignment)})"
+            f" · mt {translated - labelled:.2f} · latency {latency:.2f} s"
             f"{'  ** OVER 5 s (C1) **' if latency > LATENCY_LIMIT else ''}"
         )
+
+
+def _similarity(assignment: Assignment) -> str:
+    return "" if assignment.similarity is None else f" {assignment.similarity:.2f}"
 
 
 def run_live(mic, system) -> int:
     """Load every model, start the session clock and capture, run until Ctrl+C or an error."""
     from hyen import audio
     from hyen.asr import Recognizer as AsrModel
-    from hyen.modelfiles import SILERO_VAD
+    from hyen.modelfiles import SILERO_VAD, SPEAKER_MODEL, require
+    from hyen.speakers import SherpaEmbedder, SpeakerLabeler
     from hyen.translate import Translator as MtModel
     from hyen.vad import SileroVad
 
@@ -145,15 +155,16 @@ def run_live(mic, system) -> int:
     started = time.perf_counter()
     vads = {"mic": SileroVad(SILERO_VAD), "system": SileroVad(SILERO_VAD)}
     recognizer = AsrModel()
+    labeler = SpeakerLabeler(SherpaEmbedder(require(SPEAKER_MODEL, "speaker embedding model")), log=log)
     translator = MtModel()
     log(f"models loaded in {time.perf_counter() - started:.1f} s")
-    log(f"note: speaker labels are not implemented yet; every call-side segment is '{SYSTEM_PLACEHOLDER}' (D21)")
+    log(f"speaker labels: threshold {labeler.threshold}, new speaker from {labeler.min_new_seconds} s (D7)")
     segmenters = {name: Segmenter(name, vads[name], log=log) for name in ("mic", "system")}
     with audio.Capture({"mic": mic, "system": system}) as capture:
         t0 = time.monotonic()
         capture.start(t0)
         log("Listening. Ctrl+C stops.")
-        pipeline = Pipeline(capture, segmenters, recognizer, translator, time.monotonic, t0, log=log)
+        pipeline = Pipeline(capture, segmenters, recognizer, labeler, translator, time.monotonic, t0, log=log)
         try:
             pipeline.run()
         except KeyboardInterrupt:

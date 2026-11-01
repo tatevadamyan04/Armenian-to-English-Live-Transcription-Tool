@@ -15,6 +15,7 @@ MODELS_DIR = ROOT / "models"
 SILERO_VAD = MODELS_DIR / "vad-silero" / "silero_vad.onnx"  # D4, D19
 ASR_DIR = MODELS_DIR / "asr-hy-fastconformer"  # D5
 MT_DIR = MODELS_DIR / "mt-madlad400-3b-ct2-int8"  # D6
+SPEAKER_MODEL = MODELS_DIR / "spk-wespeaker" / "wespeaker_en_voxceleb_resnet34_LM.onnx"  # D7 (S05 revision)
 
 
 class ModelMissingError(Exception):

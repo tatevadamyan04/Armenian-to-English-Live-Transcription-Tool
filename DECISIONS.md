@@ -12,7 +12,7 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 | D4 | Phrase segmentation | Silero VAD | decided — licence checked in S03 (MIT) |
 | D5 | Armenian ASR | NVIDIA hy FastConformer (ONNX, onnx-asr) | decided — B comparison cut 2026-11-01 (D22) |
 | D6 | Translation | MADLAD-400-3B-MT (CTranslate2 int8) | decided — B comparison cut 2026-11-01 (D22) |
-| D7 | Speaker labels | ECAPA embeddings + online clustering | decided |
+| D7 | Speaker labels | WeSpeaker ResNet34-LM embeddings (sherpa-onnx) + online clustering; threshold 0.77, new speaker from 7 s | decided — revised 2026-11-01 |
 | D8 | Pipeline structure | one process, threads + queues, one inference worker | decided |
 | D9 | Evaluation data and metrics | E1 read + E2 FLEURS + E3 call | decided — E3 reference revised 2026-11-01 |
 | D10 | Licence policy | permissive only: MIT, MIT-0, Apache-2.0, BSD, 0BSD, Zlib, CC0-1.0, CC-BY-4.0 | decided — revised 2026-10-30 |
@@ -26,7 +26,7 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 | D18 | How T04 checks for lost audio | each source's clock gap within ± 0.1 s, and 0 overflows | decided |
 | D19 | Running Silero VAD | the ONNX file directly with onnxruntime; no torch | decided |
 | D20 | Downloading the models | standard-library script; pinned versions and SHA-256; no huggingface_hub | decided |
-| D21 | Call-side label before M4 | fixed "Speaker 1" placeholder until S05 | decided — temporary |
+| D21 | Call-side label before M4 | fixed "Speaker 1" placeholder until S05 | superseded by M4 (S05) |
 | D22 | Model B comparisons | cut; A measured only, A's MT decoding tuned | decided |
 | D23 | MT decoding and segment cap | beam 4, repetition penalty 1.2, no-repeat 3-gram; segments cut at 8 s | decided — confirm by T14/T15 |
 | D24 | Guards on short ASR text and MT output length | < 2 Armenian letters → no text; output ≤ 2 × input tokens + 16 | decided |
@@ -208,7 +208,48 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 
 **Revisit if:** E3 shows many mixed-speaker segments → consider B.
 
-**Sources:** [SpeechBrain ECAPA](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb/blob/5a40f2c96080d36cc8d73d0560ec5eabf96d6209/README.md) · [pyannote community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) · [community-1 announcement](https://pyannote.ai/blog/community-1) · [diart](https://pypi.org/project/diart)
+**Revision 2026-11-01 (S05) — the embedding model · Claude recommended A · Tatev chose A**
+
+New evidence: SpeechBrain fails D10. Its required dependencies include tqdm (MPL-2.0 AND MIT, ruled out in D20), huggingface_hub (kept out on purpose, D20) and torch, whose tree brings licences outside D10 (D19). The method above stands; only the model and its runtime change.
+
+- **A — sherpa-onnx (Apache-2.0) running WeSpeaker `voxceleb_resnet34_LM` as ONNX (chosen).** sherpa-onnx 2.0.1 has a cp314 macOS arm64 wheel and computes the model's filterbank features itself. The model is about 26 MB, 256-dimensional, with a VoxCeleb1-O EER of 0.72–0.80% on its card. WeSpeaker states that its VoxCeleb models follow the VoxCeleb licence, CC-BY-4.0.
+- B — onnxruntime only, the same model, our own 80-band filterbank in numpy: no new dependency, but a small mismatch with the training features would degrade the embeddings without any error.
+- C — like A, with NVIDIA TitaNet-small: its CC-BY-4.0 licence was seen only on a third-party page.
+
+Runtime: `SherpaEmbedder` in `src/hyen/speakers.py`; model from the `speaker-recongition-models` release (sic), pinned by SHA-256 in `scripts/download_models.py` (D20). Measured on E3: 28 ms median and 70 ms max per segment, against the 0.3-s budget.
+
+**Settled in S05 (2026-11-01) · Claude recommended the 7.0 s / 0.77 setting · Tatev chose it**
+
+- **Rules:** mic segments are "Me" and are never embedded. A call-side segment matching a speaker's centroid at cosine ≥ **0.77** gets that label. A non-matching segment of **≥ 7.0 s** creates a new "Speaker N"; a shorter one gets the nearest label. Only segments ≥ 7.0 s create or update a centroid. Segments under 0.5 s are not embedded and take the previous call-side label, with a note on stderr. Until the first ≥ 7.0 s segment, the call side is "Speaker 1".
+- **Bug found on the way:** the first version started Speaker 1's centroid from E3's first segment (0.74 s), against the agreed rule. Fixed, with a test.
+- **Why not E3 alone:** in E3's lettered part (0:00–7:20), B speaks alone in only 4 segments (about 7 s), and 14 segments are A+B, so R7 can't be measured on it. E4 was recorded instead (TESTS.md §3.1): a Zoom call with one other person. `eval/cross_speakers.py` interleaves E3's speaker A (32 segments, 106 s) with E4's speaker C (52 segments, 110 s) as a simulated 3.6-min call.
+- **The embeddings separate the two people:** a segment's nearest other segment is the same person 98% of the time, and 93% are closer to their own person's mean. Cosines: A–A median 0.77, C–C 0.77, A–C 0.68, with overlapping ranges (0.45–0.93 within, 0.46–0.83 across).
+- **The creation rule was the problem:** with a 1.5-s minimum no threshold gave 2 labels (merged up to 0.70, fragmented from 0.71).
+
+| New speaker from | Working thresholds (2 labels, T10 + T11 pass) | Consistency / purity there |
+|---|---|---|
+| 1.5 s | none | — |
+| 5.0 s | 0.75–0.77 | 0.87 / 0.87 |
+| 6.0 s | 0.75–0.77 | 0.86 / 0.86 |
+| **7.0 s** | **0.74–0.80** | **0.79 / 0.79** |
+
+Centring the embeddings on the recording's mean (offline experiment) widened the gap between people but not the working range; dropped.
+
+**Why:** the widest working range. Live audio can shift the similarities, and the value was tuned on the data it is scored on.
+
+**Known weaknesses:**
+- A new person gets their own label only after speaking 7 s at a stretch (segments are cut at 8 s). Until then their segments carry the nearest label. Mitigation for the interview: each caller opens with a longer sentence (P02).
+- One label per segment; mixed segments get one speaker's label.
+- Numbers are a best case: the two people came from different sessions, and the tuning and scoring data are the same.
+- Model trained on VoxCeleb (mostly English); Armenian voices over Zoom are covered only by E3/E4.
+
+**Revisit if:** the rehearsal (P01) merges or splits the speakers → tune again on the P01 recording with `eval/score_speakers.py`.
+
+**Licence check (2026-11-01, on the Mac, Python 3.14.5):** installing sherpa-onnx added exactly two packages: sherpa_onnx 2.0.1 ("Apache licensed") and sherpa-onnx-core 2.0.1 (Apache-2.0), which requires nothing else. Both are allowed by D10. `download_models.py --verify` confirmed the model's pinned SHA-256 (the value had come from one source).
+
+**Sources:** [speechbrain dependencies (PyPI Stats)](https://pypistats.org/packages/speechbrain) · [sherpa-onnx on PyPI](https://pypi.org/project/sherpa-onnx/) · [WeSpeaker ResNet34-LM card](https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/blob/80304c92fe55443239c3afa400b19551b75a3eab/README.md?code=true) · [licence statement (pyannote wrapper card)](https://huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM/blame/main/README.md) · [sherpa-onnx speaker model list](https://huggingface.co/spaces/k2-fsa/speaker-diarization/blob/1919bdd566f2cbd82222e824c63f9e13611ad7d7/model.py) · [model SHA-256 (omni-dev manifest)](https://docs.rs/omni-dev/0.29.0/src/omni_dev/voice/models.rs.html)
+
+**Original sources:** [SpeechBrain ECAPA](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb/blob/5a40f2c96080d36cc8d73d0560ec5eabf96d6209/README.md) · [pyannote community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) · [community-1 announcement](https://pyannote.ai/blog/community-1) · [diart](https://pypi.org/project/diart)
 
 ---
 
@@ -484,7 +525,7 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 
 **Why:** the format is tested early; the stderr line keeps the placeholder from being mistaken for a working feature.
 
-**Ends:** when M4 replaces it in S05.
+**Ended 2026-11-01:** M4 replaced it in S05 (D7).
 
 ---
 
