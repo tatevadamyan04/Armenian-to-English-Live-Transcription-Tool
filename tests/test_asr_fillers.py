@@ -1,4 +1,4 @@
-"""D28: the ASR's spelling of "hm" («Հովհ») is removed before the D24 guard (pure text, no model)."""
+"""D28: the ASR's spellings of "hm" («Հովհ», a lone «Հ») are removed before the D24 guard (pure text, no model)."""
 
 from __future__ import annotations
 
@@ -16,6 +16,9 @@ from hyen.asr import MIN_LETTERS, armenian_letters, remove_fillers
         ("Հովհ գյուղ։", "գյուղ։"),  # 1:12 → the real word is kept and translated
         ("հովհ, լավ եմ", "լավ եմ"),
         ("ՀՈՎՀ։", ""),
+        ("Հ գյուղ։", "գյուղ։"),  # T16 run, 1:09 → MT had invented "2013. (in Japanese) …"
+        ("Հ։", ""),
+        ("հ, լավ եմ", "լավ եմ"),
     ],
 )
 def test_filler_is_removed(asr, expected):
@@ -24,7 +27,7 @@ def test_filler_is_removed(asr, expected):
 
 @pytest.mark.parametrize(
     "text",
-    ["Հովհաննեսը եկավ։", "Բարեւ Տաթեւ։", "Լավ է, դու ինչպե՞ս ես։", "Տովհ"],
+    ["Հովհաննեսը եկավ։", "Բարեւ Տաթեւ։", "Լավ է, դու ինչպե՞ս ես։", "Տովհ", "Հայաստան", "Պետք ա գնամ։", "Սա է։"],
 )
 def test_real_words_are_untouched(text):
     assert remove_fillers(text) == text

@@ -33,7 +33,7 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 | D25 | Where a phrase is cut at the 8-s cap | after the quietest VAD chunk of the last ~2 s | decided — confirm by T16 |
 | D26 | Mic delivering only digital zeros | stop with an error after 5 s (mic only) | decided — confirm by F01 |
 | D27 | A source that stops delivering audio | stop with an error after 2 s without a block | decided — confirm by F02 |
-| D28 | The ASR's «Հովհ» for "hm" | removed as a whole word before the D24 guard | decided |
+| D28 | The ASR's «Հովհ» and lone «Հ» for "hm" | removed as whole words before the D24 guard | decided — extended 2026-11-01 |
 
 ---
 
@@ -674,3 +674,5 @@ None of the settings fixed the replaced names (D6).
 **Why not a longer minimum segment:** in the live mic run, «Այո» and «Ոչ» were 0.45–0.51 s long; a minimum that drops "hm" would drop them too.
 
 **Known gap:** other fillers or noises may come out as other words and still be translated into invented text (README limitation).
+
+**Extension 2026-11-01 · Claude recommended A · Tatev chose A — a lone «Հ»:** in two later live runs (E4 replay ~3 min; counting run), the ASR wrote a lone «Հ» 8 times: 7 times alone («Հ։», already dropped by D24) and once before a word, «Հ գյուղ», which MT turned into "2013. (in Japanese) 村田, 久保." A lone «Հ» is never a word on its own, so it is removed like «Հովհ». Options: A — lone «Հ» only (chosen); B — any lone letter except real one-letter words (է, ա, և): broader, with less evidence (other lone letters seen: «Ն», «Տ», once each), risk of dropping real words; C — leave it as a limitation. Lone «Ն», «Տ» and similar fragments stay a known limitation.
