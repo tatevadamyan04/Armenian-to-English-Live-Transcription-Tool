@@ -28,11 +28,11 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 | D20 | Downloading the models | standard-library script; pinned versions and SHA-256; no huggingface_hub | decided |
 | D21 | Call-side label before M4 | fixed "Speaker 1" placeholder until S05 | superseded by M4 (S05) |
 | D22 | Model B comparisons | cut; A measured only, A's MT decoding tuned | decided |
-| D23 | MT decoding and segment cap | beam 4, repetition penalty 1.2, no-repeat 3-gram; segments cut at 8 s | decided — confirm by T14/T15 |
+| D23 | MT decoding and segment cap | beam 4, repetition penalty 1.2, no-repeat 3-gram; segments cut at 8 s | decided — confirmed by T14/T15 |
 | D24 | Guards on short ASR text and MT output length | < 2 Armenian letters → no text; output ≤ 2 × input tokens + 16 | decided |
-| D25 | Where a phrase is cut at the 8-s cap | after the quietest VAD chunk of the last ~2 s | decided — confirm by T16 |
-| D26 | Mic delivering only digital zeros | stop with an error after 5 s (mic only) | decided — confirm by F01 |
-| D27 | A source that stops delivering audio | stop with an error after 2 s without a block | decided — confirm by F02 |
+| D25 | Where a phrase is cut at the 8-s cap | after the quietest VAD chunk of the last ~2 s | decided — T16: helps only at pauses |
+| D26 | Mic delivering only digital zeros | stop with an error after 5 s (mic only) | decided — confirmed by F01 |
+| D27 | A source that stops delivering audio | stop with an error after 2 s without a block | decided — F02 passed; stall check unit-tested only |
 | D28 | The ASR's «Հովհ» and lone «Հ» for "hm" | removed as whole words before the D24 guard | decided — extended 2026-11-01 |
 
 ---
@@ -584,6 +584,8 @@ None of the settings fixed the replaced names (D6).
 
 **Revisit if:** T14/T15 show MT pushing any segment over 5 s → beam 2 (B), or a shorter cap.
 
+**Confirmed 2026-11-01 (S06):** in all S06 live runs the slowest MT was 2.20 s and the highest latency 3.08 s (a 7.1-s mic segment); T14, T15 and T18 pass.
+
 ---
 
 ## D24 · Guards: very short ASR text, MT output length
@@ -626,6 +628,8 @@ None of the settings fixed the replaced names (D6).
 
 **Revisit if:** T16 still shows a misread word at most cuts → the probability dips don't line up with word gaps on this audio.
 
+**T16 result (2026-11-01):** 30 s of fluent counting gave one cut, 2 chunks before the cap, and it still split «տասնվեց». In fluent speech the probability doesn't dip in the last 2 s, so D25 helps only where there is a pause. One cut is too little to revisit; kept, and listed as a limitation.
+
 ---
 
 ## D26 · The microphone delivering only digital zeros
@@ -639,7 +643,7 @@ None of the settings fixed the replaced names (D6).
 - B — warn on stderr and keep running: the session would go on transcribing nothing.
 - C — rely on the P02 pre-flight checklist only.
 
-**Unverified:** that macOS delivers exact zeros (rather than no audio, or an error) to a program without microphone permission. F01 checks it; if no audio arrives at all, D27 catches it instead.
+**Verified 2026-11-01 by F01:** without microphone permission macOS delivers exact zeros; the program stopped 5 s after "Listening." with this message.
 
 ---
 
@@ -655,6 +659,8 @@ None of the settings fixed the replaced names (D6).
 - C — no watchdog: rely on `finished_callback` only; a silent stall stays possible.
 
 **Known gap:** if the AirPods disconnect but BlackHole keeps running, BlackHole delivers zeros, which look the same as a quiet call; neither D26 nor D27 can tell them apart. F02 shows what actually happens; if the program carries on silently, that goes into the README as a limitation, together with the P02 pre-flight.
+
+**F02 result (2026-11-01):** with the AirPods put away mid-replay, macOS kept the Multi-Output Device with BlackHole alone: the call audio still reached the program and was transcribed normally, but Tatev heard nothing. Not a dead source, so nothing for D27 to catch; the stall check stays covered by unit tests only. The listener losing the call goes into the README and P02.
 
 ---
 
