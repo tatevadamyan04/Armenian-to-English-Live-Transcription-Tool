@@ -32,6 +32,8 @@ SAMPLE_RATE = 16_000
 BLOCK = 512  # samples per AudioChunk: 32 ms at 16 kHz (D17)
 LATENCY = 0.5  # seconds; PortAudio sizes its input buffer from this (D17)
 SOURCES = ("mic", "system")
+STALL_SECONDS = 2.0  # a running stream that delivers nothing for this long is an error (F02, D27)
+ZERO_SECONDS = 5.0  # the mic delivering only exact zeros for this long is an error (F01, D26)
 
 
 @dataclass(frozen=True)
@@ -138,10 +140,23 @@ def to_mono(block: np.ndarray) -> np.ndarray:
 class _Source:
     """One input stream for one source, its reader thread, and the queue its chunks go to."""
 
-    def __init__(self, name: str, device: InputDevice, clock: Callable[[], float]) -> None:
+    def __init__(
+        self,
+        name: str,
+        device: InputDevice,
+        clock: Callable[[], float],
+        stall_seconds: float = STALL_SECONDS,
+        zero_seconds: float | None = None,
+        stall_clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self.name = name
+        self.stall_clock = stall_clock  # its own clock, so the session clock is read once per block, as before
         self.device = device
         self.clock = clock
+        self.stall_seconds = stall_seconds
+        self.zero_seconds = zero_seconds  # None: no zero check (BlackHole is legitimately silent)
+        self.zero_run = 0  # exact-zero samples in a row
+        self.last_block_at = 0.0  # stall_clock() when the latest block was read
         self.queue: queue.Queue[AudioChunk | CaptureError] = queue.Queue()
         self.stream: sd.InputStream | None = None
         self.thread: threading.Thread | None = None
@@ -186,20 +201,51 @@ class _Source:
 
         It sleeps until a full block is there instead of waiting inside PortAudio, so it
         never gets stuck in C and stopping is always clean.
+
+        If PortAudio's buffer stays short of a block for stall_seconds, the stream has stopped
+        delivering without PortAudio saying so; that is an error (F02, D27). A reader that is
+        merely late finds a full buffer when it wakes, so lateness never trips this check.
         """
         try:
+            self.last_block_at = self.stall_clock()
             while not self.stopping:
                 available = self.stream.read_available
                 if available < BLOCK:
+                    self.check_stall()
                     time.sleep((BLOCK - available) / SAMPLE_RATE)
                     continue
                 now = self.clock() - self.t0
                 block, overflowed = self.stream.read(BLOCK)
+                self.last_block_at = self.stall_clock()
                 self.add_block(block, overflowed, now, available)
+        except CaptureError as failure:
+            self.queue.put(failure)
         except BaseException as error:  # noqa: BLE001 — every error must reach the consumer, which raises it
             failure = CaptureError(f"{self.name}: reading {describe(self.device)} failed: {error!r}")
             failure.__cause__ = error
             self.queue.put(failure)
+
+    def check_stall(self) -> None:
+        waited = self.stall_clock() - self.last_block_at
+        if waited > self.stall_seconds:
+            raise CaptureError(
+                f"{self.name}: no audio from {describe(self.device)} for {waited:.1f} s while its stream is running. "
+                "The device was probably disconnected or the audio routing changed "
+                "(for BlackHole: the Multi-Output Device). Check the devices, then start again."
+            )
+
+    def check_zeros(self, block: np.ndarray) -> None:
+        """Exact digital zeros for zero_seconds: a microphone never does this when it works (F01, D26)."""
+        if self.zero_seconds is None:
+            return
+        self.zero_run = self.zero_run + len(block) if not np.any(block) else 0
+        if self.zero_run >= self.zero_seconds * SAMPLE_RATE:
+            raise CaptureError(
+                f"{self.name}: {describe(self.device)} has delivered only digital silence (exact zeros) "
+                f"for {self.zero_run / SAMPLE_RATE:.1f} s. Most likely Terminal has no microphone permission: "
+                "System Settings → Privacy & Security → Microphone → turn on Terminal, then quit and reopen Terminal. "
+                "Also check that the input volume (System Settings → Sound → Input) is not at zero."
+            )
 
     def add_block(self, block: np.ndarray, overflowed: bool, now: float, available: int) -> None:
         """Turn one block into an AudioChunk. Times come from sample counts (D15).
@@ -211,6 +257,7 @@ class _Source:
             raise ValueError(f"{available} samples available, but a block of {len(block)} was read")
         if overflowed:
             self.overflows += 1
+        self.check_zeros(block)
         if self.anchor is None:
             # Starting a Core Audio stream can return after audio is already flowing, so the
             # buffer may hold more than this block: all of it was captured before `now`.
@@ -261,11 +308,21 @@ class Capture:
             chunk = capture.get("mic")
     """
 
-    def __init__(self, devices: dict[str, InputDevice], clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        devices: dict[str, InputDevice],
+        clock: Callable[[], float] = time.monotonic,
+        stall_seconds: float = STALL_SECONDS,
+        zero_seconds: float = ZERO_SECONDS,
+    ) -> None:
         unknown = sorted(set(devices) - set(SOURCES))
         if unknown:
             raise ValueError(f"unknown source names {unknown}; expected {SOURCES}")
-        self._sources = {name: _Source(name, device, clock) for name, device in devices.items()}
+        # Only the mic gets the zero check: BlackHole delivers zeros whenever nothing plays.
+        self._sources = {
+            name: _Source(name, device, clock, stall_seconds, zero_seconds if name == "mic" else None)
+            for name, device in devices.items()
+        }
 
     def start(self, t0: float) -> None:
         """Open every stream, then start them back to back. t0 is the session clock's zero."""

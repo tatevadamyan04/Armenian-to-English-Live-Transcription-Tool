@@ -95,6 +95,53 @@ def test_long_speech_is_cut_at_the_cap_and_nothing_is_lost():  # T16
     assert speech_samples == speech * CHUNK
 
 
+def run_probabilities(probabilities: list[float], config: SegmenterConfig = SegmenterConfig()):
+    """Feed one chunk per probability; the VAD returns them in order."""
+    values = iter(probabilities)
+    segmenter = Segmenter("mic", lambda _: next(values), config, log=lambda _: None)
+    results = []
+    for chunk in chunks("." * len(probabilities)):
+        segment = segmenter.feed(chunk, now=chunk.t_start + CHUNK_SECONDS)
+        if segment is not None:
+            results.append(segment)
+    return results
+
+
+def speech_with_dips(length: int, dips: dict[int, float]) -> list[float]:
+    return [dips.get(index, 0.9) for index in range(length)] + [0.05] * 40
+
+
+def test_cap_cuts_after_the_quietest_chunk_in_the_last_two_seconds():  # T16 fix, D25
+    config = SegmenterConfig()
+    segments = run_probabilities(speech_with_dips(300, {220: 0.2}), config)
+    assert len(segments) == 2
+    first, second = segments
+    assert first.cut and len(first.samples) == 221 * CHUNK  # chunks 0..220: the cut is right after the dip
+    assert first.t_speech_end == pytest.approx(1.0 + 221 * CHUNK_SECONDS)
+    assert second.t_speech_start == pytest.approx(first.t_speech_end)  # no gap
+    assert len(first.samples) + len(second.samples) == (300 + config.tail) * CHUNK  # nothing lost
+
+
+def test_a_dip_before_the_window_is_ignored():
+    segments = run_probabilities(speech_with_dips(300, {100: 0.05}))
+    assert len(segments[0].samples) == 250 * CHUNK  # no lower chunk in the window: cut at the cap
+
+
+def test_the_later_of_two_equally_quiet_chunks_is_chosen():
+    segments = run_probabilities(speech_with_dips(300, {200: 0.1, 230: 0.1}))
+    assert len(segments[0].samples) == 231 * CHUNK
+
+
+def test_a_lower_but_earlier_dip_wins_over_a_later_one():
+    segments = run_probabilities(speech_with_dips(300, {195: 0.05, 240: 0.3}))
+    assert len(segments[0].samples) == 196 * CHUNK
+
+
+def test_cut_window_must_fit_in_the_cap():
+    with pytest.raises(ValueError, match="cut_window"):
+        SegmenterConfig(max_chunks=100, cut_window=101)
+
+
 def test_short_noise_is_dropped_and_logged():  # T21
     logs: list[str] = []
     segmenter, segments = run("." * 10 + "ss" + "." * 40, logs=logs)

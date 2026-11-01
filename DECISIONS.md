@@ -30,6 +30,10 @@ Status: **decided** · **decided — confirm by measurement** (the default stand
 | D22 | Model B comparisons | cut; A measured only, A's MT decoding tuned | decided |
 | D23 | MT decoding and segment cap | beam 4, repetition penalty 1.2, no-repeat 3-gram; segments cut at 8 s | decided — confirm by T14/T15 |
 | D24 | Guards on short ASR text and MT output length | < 2 Armenian letters → no text; output ≤ 2 × input tokens + 16 | decided |
+| D25 | Where a phrase is cut at the 8-s cap | after the quietest VAD chunk of the last ~2 s | decided — confirm by T16 |
+| D26 | Mic delivering only digital zeros | stop with an error after 5 s (mic only) | decided — confirm by F01 |
+| D27 | A source that stops delivering audio | stop with an error after 2 s without a block | decided — confirm by F02 |
+| D28 | The ASR's «Հովհ» for "hm" | removed as a whole word before the D24 guard | decided |
 
 ---
 
@@ -600,3 +604,73 @@ None of the settings fixed the replaced names (D6).
 **Why:** the short-text guard removes an observed invented line; the length limit bounds every translation's time whatever the model does, at no cost when outputs are normal.
 
 **Checked 2026-11-01:** over 122 translations (E1 and long.tsv at D23 settings, E3 at D23), the largest output/input token ratios were 3.25 (13 output tokens for 4 input, «Հ։», now dropped by the first guard) and 2.17 (13 for 6, «Հովհ.»). The limit for those inputs is 24 and 28 tokens, so no measured translation would have been cut. **Cost:** a one-letter real reply such as «է» is lost (rare).
+
+---
+
+## D25 · Where a phrase is cut at the segment cap
+
+**Decided 2026-11-01 · Claude recommended A · Tatev chose A · confirm by T16**
+
+**Decision:** when a phrase reaches 250 chunks (8 s, D23), M2 cuts after the chunk with the lowest Silero speech probability among the last 62 chunks (≈ 2 s); on a tie, the latest one. The chunks after the cut start the next phrase, so nothing is lost and there is no gap. Every segment stays ≤ 8 s, so the latency budget is unchanged.
+
+**Evidence:** T16 (S03, 12-s cap): every cut fell mid-word and the ASR misread the word at each cut. With the 8-s cap (D23) there are more cuts.
+
+**Options**
+- **A — lowest VAD probability in the last ~2 s (chosen):** M2 already computes the probability of every chunk; no new computation.
+- B — lowest RMS energy in the same window: independent of the VAD, but Zoom's noise suppression flattens the energy, so "quietest" may still be inside a word.
+- C — keep the hard cut and list it as a limitation.
+
+**Why a 2-s window:** a cut earlier than ~6 s would make segments of ≥ 7 s rarer, and only those create or update a speaker (D7).
+
+**Consequence:** a cut segment is 6–8 s long. Tested in `tests/test_segmenter.py` (dip inside and before the window, ties, nothing lost).
+
+**Revisit if:** T16 still shows a misread word at most cuts → the probability dips don't line up with word gaps on this audio.
+
+---
+
+## D26 · The microphone delivering only digital zeros
+
+**Decided 2026-11-01 · Claude recommended A · Tatev chose A · confirm by F01**
+
+**Decision:** M1 counts exact-zero samples in a row from the `mic` source. After 5 s of them it raises a CaptureError, which stops the program (F04), naming the likely causes: Terminal has no microphone permission, or the input volume is at zero. BlackHole is not checked: it delivers zeros whenever nothing plays.
+
+**Options**
+- **A — stop with an error (chosen):** a working microphone never delivers exact zeros (its noise floor is never exactly 0), so the error can't fire during a quiet room.
+- B — warn on stderr and keep running: the session would go on transcribing nothing.
+- C — rely on the P02 pre-flight checklist only.
+
+**Unverified:** that macOS delivers exact zeros (rather than no audio, or an error) to a program without microphone permission. F01 checks it; if no audio arrives at all, D27 catches it instead.
+
+---
+
+## D27 · A source that stops delivering audio
+
+**Decided 2026-11-01 · Claude recommended A · Tatev chose A · confirm by F02 · a timeout allowed by this entry (CLAUDE.md)**
+
+**Decision:** if a source's PortAudio buffer stays short of one block (512 samples) for 2 s while its stream is running, M1 raises a CaptureError naming the device, which stops the program. A reader that is merely late finds a full buffer when it wakes, so CPU load can't trigger it. The existing check stays: if PortAudio stops a stream by itself, `finished_callback` raises a CaptureError.
+
+**Options**
+- **A — stop after 2 s without a block (chosen).**
+- B — test F02 first and decide afterwards.
+- C — no watchdog: rely on `finished_callback` only; a silent stall stays possible.
+
+**Known gap:** if the AirPods disconnect but BlackHole keeps running, BlackHole delivers zeros, which look the same as a quiet call; neither D26 nor D27 can tell them apart. F02 shows what actually happens; if the program carries on silently, that goes into the README as a limitation, together with the P02 pre-flight.
+
+---
+
+## D28 · «Հովհ»: the ASR's spelling of "hm"
+
+**Decided 2026-11-01 · Claude recommended A · Tatev chose A**
+
+**Decision:** M3 removes «Հովհ» (any case, also «ովհ» with the first letter lost) where it stands alone as a word, with the punctuation after it, and notes this on stderr. The D24 guard runs afterwards, so a segment that was only "hm", or "hm" plus one letter, is dropped. «Հովհաննես» and other words containing these letters are untouched.
+
+**Evidence (2026-11-01, E4 replayed live, T15 run):** the call-side person's "hm" (Tatev, listening) came out as «Հովհ է.», «ովհ է։», «Հովհ.» and «Հովհ գյուղ», four times in about 75 s. MT turned them into "It is Joseph.", "Whoa! It's awful.", "John 15:23-24; Jn." and "2013. ^ a b c d e f g h i j k l m n o p q r". «Հովհ.» is the abbreviation of Հովհաննես used for the Gospel of John in Bible citations, which explains the output. Nobody says «Հովհ» as a word in conversation.
+
+**Options**
+- **A — remove «Հովհ» only (chosen):** the one filler spelling seen in our data; ~20 min.
+- B — A plus a hand list of other filler spellings (հմ, ըհը, մմ …): none seen in our data, unverified.
+- C — limitation only.
+
+**Why not a longer minimum segment:** in the live mic run, «Այո» and «Ոչ» were 0.45–0.51 s long; a minimum that drops "hm" would drop them too.
+
+**Known gap:** other fillers or noises may come out as other words and still be translated into invented text (README limitation).

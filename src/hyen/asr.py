@@ -34,6 +34,18 @@ def armenian_letters(text: str) -> int:
     return len(_ARMENIAN_LETTER.findall(text))
 
 
+# D28: in the E4 replay the ASR wrote a "hm" as «Հովհ» (also «ովհ», first letter lost), and MT
+# turned it into invented text ("John 15:23-24", "2013. ^ a b c …"): «Հովհ.» abbreviates
+# Հովհաննես in Bible citations. Removed only as a whole word, with the punctuation after it,
+# so «Հովհաննես» stays.
+_FILLER = re.compile(r"(?<!\w)հ?ովհ(?!\w)[.։,՝:;!?…]*", re.IGNORECASE)
+
+
+def remove_fillers(text: str) -> str:
+    """The text without the ASR's spelling of "hm" (D28), whitespace collapsed."""
+    return " ".join(_FILLER.sub(" ", text).split())
+
+
 class Recognizer:
     """Armenian text for a segment of 16 kHz mono float32 audio."""
 
@@ -45,8 +57,9 @@ class Recognizer:
     def transcribe(self, samples: np.ndarray) -> str:
         """The recognised text, stripped; an empty string means nothing was recognised.
 
-        Text with fewer than MIN_LETTERS Armenian letters also counts as nothing recognised
-        and is noted on stderr (D24), so the caller drops it like empty text.
+        The filler «Հովհ» ("hm") is removed first (D28). Text with fewer than MIN_LETTERS
+        Armenian letters then counts as nothing recognised (D24), so the caller drops it like
+        empty text. Both are noted on stderr.
         """
         if samples.ndim != 1 or samples.dtype != np.float32:
             raise ValueError(f"expected 1-D float32 samples, got {samples.dtype} {samples.shape}")
@@ -54,6 +67,10 @@ class Recognizer:
         if not isinstance(text, str):
             raise TypeError(f"onnx-asr returned {type(text).__name__}, expected str for one waveform")
         text = text.strip()
+        cleaned = remove_fillers(text)
+        if cleaned != " ".join(text.split()):
+            print(f"asr: removed filler «Հովհ» (hm): {text!r} → {cleaned!r} (D28)", file=sys.stderr)
+        text = cleaned
         if text and armenian_letters(text) < MIN_LETTERS:
             print(f"asr: {text!r} has fewer than {MIN_LETTERS} Armenian letters; treated as no text (D24)",
                   file=sys.stderr)
