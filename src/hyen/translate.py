@@ -22,9 +22,7 @@ import sentencepiece
 from hyen.modelfiles import MT_DIR, require
 
 TARGET_TAG = "<2en>"
-THREADS = 8  # CPU threads for translation; starting value to measure in S04 (M4 Pro: 12+ cores)
-# D23: beam 4 with repetition limits. Beam 1 repeated sentences; beam 1 with limits invented
-# content instead ("I am 20 years old and from Russia"); beam 4 with limits was clean on E1.
+THREADS = 8  # CPU threads for translation; fixed, not tuned (S04 tuned decoding only, D23)
 BEAM_SIZE = 4
 REPETITION_PENALTY = 1.2  # > 1 penalises tokens already generated (CTranslate2's default is 1, off)
 NO_REPEAT_NGRAM_SIZE = 3  # forbids repeating any 3-token sequence (CTranslate2's default is 0, off)

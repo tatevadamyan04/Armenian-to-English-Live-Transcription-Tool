@@ -24,7 +24,7 @@ E1_FILES = [f"e1_{n:02d}.wav" for n in range(1, 26)]
 def read_wav(path: Path) -> np.ndarray:
     """16 kHz mono 16-bit WAV → float32 in [-1, 1]."""
     if not path.exists():
-        pytest.fail(f"{path} not found; record E1 first (eval/record.py prompts, session 02)")
+        pytest.skip(f"{path} not found; record E1 first (eval/record.py prompts, session 02)")
     with wave.open(str(path), "rb") as reader:
         assert (reader.getframerate(), reader.getnchannels(), reader.getsampwidth()) == (16_000, 1, 2), path
         frames = reader.readframes(reader.getnframes())

@@ -31,7 +31,7 @@ LATIN_LETTER = re.compile("[A-Za-z]")
 
 def read_wav(path: Path) -> np.ndarray:
     if not path.exists():
-        pytest.fail(f"{path} not found; record E1 first (eval/record.py prompts, session 02)")
+        pytest.skip(f"{path} not found; record E1 first (eval/record.py prompts, session 02)")
     with wave.open(str(path), "rb") as reader:
         assert (reader.getframerate(), reader.getnchannels(), reader.getsampwidth()) == (16_000, 1, 2), path
         frames = reader.readframes(reader.getnframes())
